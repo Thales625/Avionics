@@ -82,6 +82,6 @@ void task_display(void*){
 	    // Now its 0x13, which means DMP is refreshed with 10Hz rate
 		// vTaskDelay(5/portTICK_PERIOD_MS);
 	}
-
+ // teste
 	vTaskDelete(NULL);
 }
