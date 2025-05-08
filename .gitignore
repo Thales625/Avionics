@@ -1,5 +1,4 @@
 # esp-idf
-.vscode/
 build/
 sdkconfig
 sdkconfig.old
