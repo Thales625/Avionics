@@ -1,17 +1,82 @@
+#include <cstring>
+
 #include "freertos/FreeRTOS.h"
-#include "sdkconfig.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/message_buffer.h"
+#include "esp_log.h"
+
+#include "mdns.h"
+#include "websocket_server.h"
+
+#include "parameter.h"
+
+MessageBufferHandle_t xMessageBufferToClient;
+
+static const char *TAG = "MAIN";
+static const char *MDNS_HOSTNAME = "ESP32";
+
+QueueHandle_t xQueueTrans;
+
+void mpu6050(void *pvParameters);
 
 extern "C" {
 	void app_main(void);
+    void start_wifi(void);
+    void start_mdns(void);
+    int ws_server_start(void);
+    void udp_trans(void *pvParameters);
+    void server_task(void *pvParameters);
+    void client_task(void *pvParameters);
 }
 
-extern void task_initI2C(void*);
-extern void task_display(void*);
+void start_mdns(void) {
+	//initialize mDNS
+	ESP_ERROR_CHECK(mdns_init() );
+	//set mDNS hostname (required if you want to advertise services)
+	ESP_ERROR_CHECK(mdns_hostname_set(MDNS_HOSTNAME) );
+	ESP_LOGI(TAG, "mdns hostname set to: [%s]", MDNS_HOSTNAME);
 
-void app_main(void)
-{
-    xTaskCreate(&task_initI2C, "mpu_task", 2048, NULL, 5, NULL);
-    vTaskDelay(500/portTICK_PERIOD_MS);
-    xTaskCreate(&task_display, "disp_task", 8192, NULL, 5, NULL);
+	//initialize service
+	ESP_ERROR_CHECK(mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0) );
+}
+
+void app_main(void) {
+	// Initialize WiFi
+	start_wifi();
+
+	// Initialize mDNS
+	start_mdns();
+
+	// Create Queue
+	xQueueTrans = xQueueCreate(10, sizeof(POSE_t));
+	configASSERT(xQueueTrans);
+
+	// Create Message Buffer
+	xMessageBufferToClient = xMessageBufferCreate(1024);
+	configASSERT(xMessageBufferToClient);
+
+	/* Get the local IP address */
+	esp_netif_ip_info_t ip_info;
+	ESP_ERROR_CHECK(esp_netif_get_ip_info(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"), &ip_info));
+	char cparam0[64];
+	sprintf(cparam0, IPSTR, IP2STR(&ip_info.ip));
+	ESP_LOGI(TAG, "cparam0=[%s]", cparam0);
+
+	// Start web socket server
+	ws_server_start();
+
+	// Start web server
+	xTaskCreate(&server_task, "SERVER", 1024*3, (void *)cparam0, 5, NULL);
+
+	// Start web client
+	xTaskCreate(&client_task, "CLIENT", 1024*3, (void *)0x011, 5, NULL);
+
+	// Start imu task
+	xTaskCreate(&mpu6050, "IMU", 1024*8, NULL, 5, NULL);
+
+	// Start udp task
+	xTaskCreate(&udp_trans, "UDP", 1024*3, NULL, 5, NULL);
+
+	vTaskDelay(100);
 }
