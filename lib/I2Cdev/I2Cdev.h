@@ -1,83 +1,251 @@
-// I2Cdev library collection - Main I2C device class
-// Abstracts bit and byte I2C R/W functions into a convenient class
-// EFM32 stub port by Nicolas Baldeck <nicolas@pioupiou.fr>
-// Based on Arduino's I2Cdev by Jeff Rowberg <jeff@rowberg.net>
-//
-// Changelog:
-//      2015-01-02 - Initial release
+/*
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2018 Ruslan V. Uss <unclerus@gmail.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
-
-/* ============================================
-I2Cdev device library code is placed under the MIT license
-Copyright (c) 2015 Jeff Rowberg, Nicolas Baldeck
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-===============================================
-*/
-
-#ifndef _I2CDEV_H_
-#define _I2CDEV_H_
+/**
+ * @file i2cdev.h
+ * @defgroup i2cdev i2cdev
+ * @{
+ *
+ * ESP-IDF I2C master thread-safe functions for communication with I2C slave
+ *
+ * Copyright (c) 2018 Ruslan V. Uss <unclerus@gmail.com>
+ *
+ * MIT Licensed as described in the file LICENSE
+ */
+#ifndef __I2CDEV_H__
+#define __I2CDEV_H__
 
 #include <driver/i2c.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <esp_err.h>
+#include <esp_idf_lib_helpers.h>
 
-#define I2C_SDA_PORT gpioPortA
-#define I2C_SDA_PIN 0
-#define I2C_SDA_MODE gpioModeWiredAnd
-#define I2C_SDA_DOUT 1
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#define I2C_SCL_PORT gpioPortA
-#define I2C_SCL_PIN 1
-#define I2C_SCL_MODE gpioModeWiredAnd
-#define I2C_SCL_DOUT 1
+#if HELPER_TARGET_IS_ESP8266
 
-#define I2CDEV_DEFAULT_READ_TIMEOUT 1000
+#define I2CDEV_MAX_STRETCH_TIME 0xffffffff
 
-class I2Cdev {
-    public:
-        I2Cdev();
+#else
 
-        static void initialize();
-        static void enable(bool isEnabled);
+#include <soc/i2c_reg.h>
+#if defined(I2C_TIME_OUT_VALUE_V)
+#define I2CDEV_MAX_STRETCH_TIME I2C_TIME_OUT_VALUE_V
+#elif defined(I2C_TIME_OUT_REG_V)
+#define I2CDEV_MAX_STRETCH_TIME I2C_TIME_OUT_REG_V
+#else
+#define I2CDEV_MAX_STRETCH_TIME 0x00ffffff
+#endif
 
-        static int8_t readBit(uint8_t devAddr, uint8_t regAddr, uint8_t bitNum, uint8_t *data, uint16_t timeout=I2Cdev::readTimeout);
-        //TODO static int8_t readBitW(uint8_t devAddr, uint8_t regAddr, uint8_t bitNum, uint16_t *data, uint16_t timeout=I2Cdev::readTimeout);
-        static int8_t readBits(uint8_t devAddr, uint8_t regAddr, uint8_t bitStart, uint8_t length, uint8_t *data, uint16_t timeout=I2Cdev::readTimeout);
-        //TODO static int8_t readBitsW(uint8_t devAddr, uint8_t regAddr, uint8_t bitStart, uint8_t length, uint16_t *data, uint16_t timeout=I2Cdev::readTimeout);
-        static int8_t readByte(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint16_t timeout=I2Cdev::readTimeout);
-        static int8_t readWord(uint8_t devAddr, uint8_t regAddr, uint16_t *data, uint16_t timeout=I2Cdev::readTimeout);
-        static int8_t readBytes(uint8_t devAddr, uint8_t regAddr, uint8_t length, uint8_t *data, uint16_t timeout=I2Cdev::readTimeout);
-        //TODO static int8_t readWords(uint8_t devAddr, uint8_t regAddr, uint8_t length, uint16_t *data, uint16_t timeout=I2Cdev::readTimeout);
+#endif /* HELPER_TARGET_IS_ESP8266 */
 
-        static bool writeBit(uint8_t devAddr, uint8_t regAddr, uint8_t bitNum, uint8_t data);
-        //TODO static bool writeBitW(uint8_t devAddr, uint8_t regAddr, uint8_t bitNum, uint16_t data);
-        static bool writeBits(uint8_t devAddr, uint8_t regAddr, uint8_t bitStart, uint8_t length, uint8_t data);
-        //TODO static bool writeBitsW(uint8_t devAddr, uint8_t regAddr, uint8_t bitStart, uint8_t length, uint16_t data);
-        static bool writeByte(uint8_t devAddr, uint8_t regAddr, uint8_t data);
-        static bool writeWord(uint8_t devAddr, uint8_t regAddr, uint16_t data);
-        static bool writeBytes(uint8_t devAddr, uint8_t regAddr, uint8_t length, uint8_t *data);
-        //TODO static bool writeWords(uint8_t devAddr, uint8_t regAddr, uint8_t length, uint16_t *data);
+/**
+ * I2C device descriptor
+ */
+typedef struct
+{
+    i2c_port_t port;         //!< I2C port number
+    i2c_config_t cfg;        //!< I2C driver configuration
+    uint8_t addr;            //!< Unshifted address
+    SemaphoreHandle_t mutex; //!< Device mutex
+    uint32_t timeout_ticks;  /*!< HW I2C bus timeout (stretch time), in ticks. 80MHz APB clock
+                                  ticks for ESP-IDF, CPU ticks for ESP8266.
+                                  When this value is 0, I2CDEV_MAX_STRETCH_TIME will be used */
+} i2c_dev_t;
 
-        static uint16_t readTimeout;
+/**
+ * I2C transaction type
+ */
+typedef enum {
+    I2C_DEV_WRITE = 0, /**< Write operation */
+    I2C_DEV_READ       /**< Read operation */
+} i2c_dev_type_t;
 
-    //private:
-        static void SelectRegister(uint8_t dev, uint8_t reg);
-        //static I2C_TransferReturn_TypeDef transfer(I2C_TransferSeq_TypeDef *seq, uint16_t timeout=I2Cdev::readTimeout);
-};
+/**
+ * @brief Init library
+ *
+ * The function must be called before any other
+ * functions of this library.
+ *
+ * @return ESP_OK on success
+ */
+esp_err_t i2cdev_init();
 
-#endif /* _I2CDEV_H_ */
+/**
+ * @brief Finish work with library
+ *
+ * Uninstall i2c drivers.
+ *
+ * @return ESP_OK on success
+ */
+esp_err_t i2cdev_done();
+
+/**
+ * @brief Create mutex for device descriptor
+ *
+ * This function does nothing if option CONFIG_I2CDEV_NOLOCK is enabled.
+ *
+ * @param dev Device descriptor
+ * @return ESP_OK on success
+ */
+esp_err_t i2c_dev_create_mutex(i2c_dev_t *dev);
+
+/**
+ * @brief Delete mutex for device descriptor
+ *
+ * This function does nothing if option CONFIG_I2CDEV_NOLOCK is enabled.
+ *
+ * @param dev Device descriptor
+ * @return ESP_OK on success
+ */
+esp_err_t i2c_dev_delete_mutex(i2c_dev_t *dev);
+
+/**
+ * @brief Take device mutex
+ *
+ * This function does nothing if option CONFIG_I2CDEV_NOLOCK is enabled.
+ *
+ * @param dev Device descriptor
+ * @return ESP_OK on success
+ */
+esp_err_t i2c_dev_take_mutex(i2c_dev_t *dev);
+
+/**
+ * @brief Give device mutex
+ *
+ * This function does nothing if option CONFIG_I2CDEV_NOLOCK is enabled.
+ *
+ * @param dev Device descriptor
+ * @return ESP_OK on success
+ */
+esp_err_t i2c_dev_give_mutex(i2c_dev_t *dev);
+
+/**
+ * @brief Check the availability of the device
+ *
+ * Issue an operation of \p operation_type to the I2C device then stops.
+ *
+ * @param dev Device descriptor
+ * @param operation_type Operation type
+ * @return ESP_OK if device is available
+ */
+esp_err_t i2c_dev_probe(const i2c_dev_t *dev, i2c_dev_type_t operation_type);
+
+/**
+ * @brief Read from slave device
+ *
+ * Issue a send operation of \p out_data register address, followed by reading \p in_size bytes
+ * from slave into \p in_data .
+ * Function is thread-safe.
+ *
+ * @param dev Device descriptor
+ * @param out_data Pointer to data to send if non-null
+ * @param out_size Size of data to send
+ * @param[out] in_data Pointer to input data buffer
+ * @param in_size Number of byte to read
+ * @return ESP_OK on success
+ */
+esp_err_t i2c_dev_read(const i2c_dev_t *dev, const void *out_data,
+        size_t out_size, void *in_data, size_t in_size);
+
+/**
+ * @brief Write to slave device
+ *
+ * Write \p out_size bytes from \p out_data to slave into \p out_reg register address.
+ * Function is thread-safe.
+ *
+ * @param dev Device descriptor
+ * @param out_reg Pointer to register address to send if non-null
+ * @param out_reg_size Size of register address
+ * @param out_data Pointer to data to send
+ * @param out_size Size of data to send
+ * @return ESP_OK on success
+ */
+esp_err_t i2c_dev_write(const i2c_dev_t *dev, const void *out_reg,
+        size_t out_reg_size, const void *out_data, size_t out_size);
+
+/**
+ * @brief Read from register with an 8-bit address
+ *
+ * Shortcut to ::i2c_dev_read().
+ *
+ * @param dev Device descriptor
+ * @param reg Register address
+ * @param[out] in_data Pointer to input data buffer
+ * @param in_size Number of byte to read
+ * @return ESP_OK on success
+ */
+esp_err_t i2c_dev_read_reg(const i2c_dev_t *dev, uint8_t reg,
+        void *in_data, size_t in_size);
+
+/**
+ * @brief Write to register with an 8-bit address
+ *
+ * Shortcut to ::i2c_dev_write().
+ *
+ * @param dev Device descriptor
+ * @param reg Register address
+ * @param out_data Pointer to data to send
+ * @param out_size Size of data to send
+ * @return ESP_OK on success
+ */
+esp_err_t i2c_dev_write_reg(const i2c_dev_t *dev, uint8_t reg,
+        const void *out_data, size_t out_size);
+
+#define I2C_DEV_TAKE_MUTEX(dev) do { \
+        esp_err_t __ = i2c_dev_take_mutex(dev); \
+        if (__ != ESP_OK) return __;\
+    } while (0)
+
+#define I2C_DEV_GIVE_MUTEX(dev) do { \
+        esp_err_t __ = i2c_dev_give_mutex(dev); \
+        if (__ != ESP_OK) return __;\
+    } while (0)
+
+#define I2C_DEV_CHECK(dev, X) do { \
+        esp_err_t ___ = X; \
+        if (___ != ESP_OK) { \
+            I2C_DEV_GIVE_MUTEX(dev); \
+            return ___; \
+        } \
+    } while (0)
+
+#define I2C_DEV_CHECK_LOGE(dev, X, msg, ...) do { \
+        esp_err_t ___ = X; \
+        if (___ != ESP_OK) { \
+            I2C_DEV_GIVE_MUTEX(dev); \
+            ESP_LOGE(TAG, msg, ## __VA_ARGS__); \
+            return ___; \
+        } \
+    } while (0)
+
+#ifdef __cplusplus
+}
+#endif
+
+/**@}*/
+
+#endif /* __I2CDEV_H__ */

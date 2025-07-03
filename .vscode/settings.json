@@ -5,5 +5,11 @@
 	],
 	"idf.customExtraVars": {
 		"IDF_TARGET": "esp32"
-	}
+	},
+	"files.associations": {
+		"mpu6050.h": "c",
+		"bmp280.h": "c",
+		"task.h": "c"
+	},
+	"idf.portWin": "COM5"
 }
