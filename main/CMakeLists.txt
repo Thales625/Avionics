@@ -1,4 +1,3 @@
-set(COMPONENT_SRCS "main.cpp example.cpp")
-set(COMPONENT_ADD_INCLUDEDIRS ".")
-
-register_component()
+idf_component_register(SRCS "main.c"
+                    INCLUDE_DIRS "."
+                    REQUIRES mpu6050 bmp280)
