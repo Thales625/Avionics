@@ -11,5 +11,6 @@
 		"bmp280.h": "c",
 		"task.h": "c"
 	},
-	"idf.portWin": "COM5"
+	"idf.portWin": "COM5",
+	"idf.port": "/dev/ttyUSB0"
 }

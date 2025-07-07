@@ -7,7 +7,7 @@
 #include <mpu6050.h>
 #include <bmp280.h>
 
-static const char *TAG = "avionics_test";
+static const char *TAG = "avionics";
 
 #define SDA_GPIO_PIN 21
 #define SCL_GPIO_PIN 22
@@ -29,10 +29,10 @@ void main_task(void *pvParameters) {
     while (1) {
         esp_err_t res = i2c_dev_probe(&mpu_dev.i2c_dev, I2C_DEV_WRITE);
         if (res == ESP_OK) {
-            ESP_LOGI(TAG, "Found MPU60x0 device");
+            ESP_LOGI(TAG, "Found MPU6050 device");
             break;
         }
-        ESP_LOGE(TAG, "MPU60x0 not found");
+        ESP_LOGE(TAG, "MPU6050 not found");
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
