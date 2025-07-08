@@ -43,7 +43,7 @@ void main_task(void *pvParameters) {
     ESP_LOGI(TAG, "Gyro range:  %d", mpu_dev.ranges.gyro);
 
     // main loop
-    float pressure, temperature, humidity;
+    float pressure, temperature;
     mpu6050_acceleration_t accel = { 0 };
     mpu6050_rotation_t rotation = { 0 };
 
@@ -66,14 +66,15 @@ void main_task(void *pvParameters) {
         ESP_LOGI(TAG, "Pressure = %.2f", pressure);
         */
 
-        if (bmp280_read_float(&bmp_dev, &temperature, &pressure, &humidity) != ESP_OK) {
+        if (bmp280_read_float(&bmp_dev, &temperature, &pressure) != ESP_OK) {
             printf("Temperature/pressure reading failed\n");
             continue;
         }
 
-        altitude = 44330 * (1.0 - pow((pressure / 100) / 1013.25, 0.1903));
+        // altitude = 44330 * (1.0 - pow((pressure / 100) / 1013.25, 0.1903));
+        altitude = 44330 * (1.0 - pow(pressure / 1013.25, 0.1903));
 
-        printf("alt: %f\n", altitude);
+        printf("pressure: %f | alt: %f\n", pressure, altitude);
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }

@@ -224,8 +224,7 @@ esp_err_t bmp280_is_measuring(bmp280_t *dev, bool *busy);
  * @param[out] humidity Humidity, optional
  * @return `ESP_OK` on success
  */
-esp_err_t bmp280_read_fixed(bmp280_t *dev, int32_t *temperature,
-                            uint32_t *pressure, uint32_t *humidity);
+esp_err_t bmp280_read_fixed(bmp280_t *dev, int32_t *temperature, uint32_t *pressure);
 
 /**
  * @brief Read compensated temperature and pressure data
@@ -238,8 +237,7 @@ esp_err_t bmp280_read_fixed(bmp280_t *dev, int32_t *temperature,
  * @param[out] humidity Relative humidity, percents (optional)
  * @return `ESP_OK` on success
  */
-esp_err_t bmp280_read_float(bmp280_t *dev, float *temperature,
-                            float *pressure, float *humidity);
+esp_err_t bmp280_read_float(bmp280_t *dev, float *temperature, float *pressure);
 
 #ifdef __cplusplus
 }
