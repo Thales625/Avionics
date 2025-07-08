@@ -54,6 +54,8 @@ extern "C" {
 
 #define HMC5883L_ID 0x00333448  //!< Chip ID, "H43"
 
+#define CONFIG_HMC5883L_MEAS_TIMEOUT 1000000 // 1 sec
+
 /**
  * Device operating mode
  */
