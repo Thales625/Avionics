@@ -353,7 +353,7 @@ static inline uint32_t compensate_humidity(bmp280_t *dev, int32_t adc_hum, int32
     return v_x1_u32r >> 12;
 }
 
-esp_err_t bmp280_read_fixed(bmp280_t *dev, int32_t *temperature, uint32_t *pressure, uint32_t *humidity)
+esp_err_t bmp280_read_fixed(bmp280_t *dev, int32_t *temperature, uint32_t *pressure)
 {
     CHECK_ARG(dev && temperature && pressure);
 
@@ -361,19 +361,10 @@ esp_err_t bmp280_read_fixed(bmp280_t *dev, int32_t *temperature, uint32_t *press
     int32_t adc_temp;
     uint8_t data[8];
 
-    // Only the BME280 supports reading the humidity.
-    if (dev->id != BME280_CHIP_ID)
-    {
-        if (humidity)
-            *humidity = 0;
-        humidity = NULL;
-    }
-
     I2C_DEV_TAKE_MUTEX(&dev->i2c_dev);
 
     // Need to read in one sequence to ensure they match.
-    size_t size = humidity ? 8 : 6;
-    CHECK_LOGE(dev, i2c_dev_read_reg(&dev->i2c_dev, 0xf7, data, size), "Failed to read data");
+    CHECK_LOGE(dev, i2c_dev_read_reg(&dev->i2c_dev, 0xf7, data, 6), "Failed to read data");
 
     adc_pressure = data[0] << 12 | data[1] << 4 | data[2] >> 4;
     adc_temp = data[3] << 12 | data[4] << 4 | data[5] >> 4;
@@ -384,28 +375,18 @@ esp_err_t bmp280_read_fixed(bmp280_t *dev, int32_t *temperature, uint32_t *press
     *temperature = compensate_temperature(dev, adc_temp, &fine_temp);
     *pressure = compensate_pressure(dev, adc_pressure, fine_temp);
 
-    if (humidity)
-    {
-        int32_t adc_humidity = data[6] << 8 | data[7];
-        ESP_LOGD(TAG, "ADC humidity: %" PRIi32, adc_humidity);
-        *humidity = compensate_humidity(dev, adc_humidity, fine_temp);
-    }
-
     I2C_DEV_GIVE_MUTEX(&dev->i2c_dev);
 
     return ESP_OK;
 }
 
-esp_err_t bmp280_read_float(bmp280_t *dev, float *temperature, float *pressure, float *humidity)
+esp_err_t bmp280_read_float(bmp280_t *dev, float *temperature, float *pressure)
 {
     int32_t fixed_temperature;
     uint32_t fixed_pressure;
-    uint32_t fixed_humidity;
-    CHECK(bmp280_read_fixed(dev, &fixed_temperature, &fixed_pressure, humidity ? &fixed_humidity : NULL));
+    CHECK(bmp280_read_fixed(dev, &fixed_temperature, &fixed_pressure));
     *temperature = (float)fixed_temperature / 100;
-    *pressure = (float)fixed_pressure / 256;
-    if (humidity)
-        *humidity = (float)fixed_humidity / 1024;
+    *pressure = (float)fixed_pressure / 25600;
 
     return ESP_OK;
 }
