@@ -3,6 +3,7 @@
 #include <esp_err.h>
 #include <esp_log.h>
 #include <stdio.h>
+#include <math.h>
 
 #include <mpu6050.h>
 #include <bmp280.h>
@@ -46,9 +47,12 @@ void main_task(void *pvParameters) {
     mpu6050_acceleration_t accel = { 0 };
     mpu6050_rotation_t rotation = { 0 };
 
-    while (1) {
-        ESP_ERROR_CHECK(mpu6050_get_motion(&mpu_dev, &accel, &rotation));
+    float altitude;
 
+    while (1) {
+        /*
+        ESP_ERROR_CHECK(mpu6050_get_motion(&mpu_dev, &accel, &rotation));
+        
         ESP_LOGI(TAG, "**********************************************************************");
         ESP_LOGI(TAG, "Acceleration: x=%.4f   y=%.4f   z=%.4f", accel.x, accel.y, accel.z);
         ESP_LOGI(TAG, "Rotation:     x=%.4f   y=%.4f   z=%.4f", rotation.x, rotation.y, rotation.z);
@@ -57,9 +61,19 @@ void main_task(void *pvParameters) {
             printf("Temperature/pressure reading failed\n");
             continue;
         }
-
+        
         ESP_LOGI(TAG, "Temperature = %.2f", temperature);
         ESP_LOGI(TAG, "Pressure = %.2f", pressure);
+        */
+
+        if (bmp280_read_float(&bmp_dev, &temperature, &pressure, &humidity) != ESP_OK) {
+            printf("Temperature/pressure reading failed\n");
+            continue;
+        }
+
+        altitude = 44330 * (1.0 - pow((pressure / 100) / 1013.25, 0.1903));
+
+        printf("alt: %f\n", altitude);
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
