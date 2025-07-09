@@ -71,10 +71,10 @@ void main_task(void *pvParameters) {
             continue;
         }
 
-        // altitude = 44330 * (1.0 - pow((pressure / 100) / 1013.25, 0.1903));
-        altitude = 44330 * (1.0 - pow(pressure / 1013.25, 0.1903));
+        // altitude = 44330 * (1.0 - pow(pressure / 1013.25, 0.1903));
+        altitude = pressure;
 
-        printf("pressure: %f | alt: %f\n", pressure, altitude);
+        printf("%f\n", altitude);
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
