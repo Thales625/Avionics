@@ -1,6 +1,6 @@
 if __name__ == "__main__":
 	from serial import Serial
-	from time import time, sleep
+	from time import time
 	from utils import *
 	import numpy as np
 	import matplotlib.pyplot as plt
@@ -54,25 +54,23 @@ if __name__ == "__main__":
 			try:
 				values = reading.split(" ")
 
-				if len(values) != 7: continue
-
-				acc = np.array([float(values[0]), float(values[1]), float(values[2])])
-				gyro = np.radians(np.array([float(values[3]), float(values[4]), float(values[5])]))
+				measure_acc = np.array([float(values[2]), float(values[1]), -float(values[0])])
+				measure_gyro = np.array([np.deg2rad(float(values[5])), np.deg2rad(float(values[4])), -np.deg2rad(float(values[3]))])
 
 				# gyro integration
-				rotation = integrate_quaternion(rotation, gyro, dt)
+				rotation = integrate_quaternion(rotation, measure_gyro, dt)
 
-				if np.linalg.norm(acc) > 0:
-					acc_norm = acc / np.linalg.norm(acc)
-					q_acc = quaternion_from_vector_alignment(acc_norm, np.array([1, 0, 0]))
-					rotation = slerp(rotation, q_acc, 0.02)
-				
-				g_sensor = rotate_vector_by_quaternion(np.array([-1, 0, 0]), rotation)
+				q_acc = quaternion_from_vector_alignment(measure_acc / np.linalg.norm(measure_acc), np.array([0, 0, -1]))
+				rotation = slerp(rotation, q_acc, 0.02)
 
-				a_linear = (acc + g_sensor) * 9.81
+				# Rotate acceleration vector from sensor/body frame to world frame
+				acc_world = rotate_vector_by_quaternion(measure_acc, rotation)
 
-				velocity += a_linear * dt
+				# kalman
+				velocity += acc_world  * dt
 				position += velocity * dt
+
+				print(acc_world)
 
 			except ValueError:
 				print(reading)
@@ -83,7 +81,7 @@ if __name__ == "__main__":
 		colors = ['r', 'g', 'b']
 		for i in range(3):
 			vec = rotate_vector_by_quaternion(axes[i], rotation)
-			quivers.append(ax.quiver(position[0], position[1], position[2], -vec[2], vec[1], -vec[0], color=colors[i], length=1, normalize=True))
+			quivers.append(ax.quiver(position[0], position[1], position[2], vec[0], vec[1], vec[2], color=colors[i], length=1, normalize=True))
 	
 		ax.set_xlim(position[0] - 3, position[0] + 3)
 		ax.set_ylim(position[1] - 3, position[1] + 3)
