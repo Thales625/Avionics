@@ -13,6 +13,8 @@ static const char *TAG = "avionics";
 #define SDA_GPIO_PIN 21
 #define SCL_GPIO_PIN 22
 
+// #define DEBUG
+
 void main_task(void *pvParameters) {
     // BMP280
     bmp280_params_t params;
@@ -39,44 +41,45 @@ void main_task(void *pvParameters) {
 
     ESP_ERROR_CHECK(mpu6050_init(&mpu_dev));
 
+    ESP_ERROR_CHECK(mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_4));
+    ESP_ERROR_CHECK(mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_250));
+
     ESP_LOGI(TAG, "Accel range: %d", mpu_dev.ranges.accel);
     ESP_LOGI(TAG, "Gyro range:  %d", mpu_dev.ranges.gyro);
 
     // main loop
-    float pressure, temperature;
     mpu6050_acceleration_t accel = { 0 };
     mpu6050_rotation_t rotation = { 0 };
+
+    float pressure, temperature;
 
     float altitude;
 
     while (1) {
-        /*
+        // read mpu6050
         ESP_ERROR_CHECK(mpu6050_get_motion(&mpu_dev, &accel, &rotation));
+
+        // read bmp280
+        ESP_ERROR_CHECK(bmp280_read_float(&bmp_dev, &temperature, &pressure));
         
+        #ifdef DEBUG
         ESP_LOGI(TAG, "**********************************************************************");
         ESP_LOGI(TAG, "Acceleration: x=%.4f   y=%.4f   z=%.4f", accel.x, accel.y, accel.z);
         ESP_LOGI(TAG, "Rotation:     x=%.4f   y=%.4f   z=%.4f", rotation.x, rotation.y, rotation.z);
-
-        if (bmp280_read_float(&bmp_dev, &temperature, &pressure, &humidity) != ESP_OK) {
-            printf("Temperature/pressure reading failed\n");
-            continue;
-        }
         
         ESP_LOGI(TAG, "Temperature = %.2f", temperature);
         ESP_LOGI(TAG, "Pressure = %.2f", pressure);
-        */
+        #endif
 
-        if (bmp280_read_float(&bmp_dev, &temperature, &pressure) != ESP_OK) {
-            printf("Temperature/pressure reading failed\n");
-            continue;
-        }
+        // filtering
+        altitude = 44330 * (1.0 - pow(pressure / 1013.25, 0.1903));
 
-        // altitude = 44330 * (1.0 - pow(pressure / 1013.25, 0.1903));
-        altitude = pressure;
+        #ifndef DEBUG
+        // acc.x acc.y acc.z rot.x rot.y rot.z altitude
+        printf("%f %f %f %f %f %f %f\n", accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, altitude);
+        #endif
 
-        printf("%f\n", altitude);
-
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
