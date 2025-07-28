@@ -40,12 +40,12 @@ void main_task(void *pvParameters) {
     }
 
     ESP_ERROR_CHECK(mpu6050_init(&mpu_dev));
-
-    ESP_ERROR_CHECK(mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_4));
+    
     ESP_ERROR_CHECK(mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_250));
+    ESP_ERROR_CHECK(mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_4));
 
-    ESP_LOGI(TAG, "Accel range: %d", mpu_dev.ranges.accel);
     ESP_LOGI(TAG, "Gyro range:  %d", mpu_dev.ranges.gyro);
+    ESP_LOGI(TAG, "Accel range: %d", mpu_dev.ranges.accel);
 
     // main loop
     mpu6050_acceleration_t accel = { 0 };
@@ -79,13 +79,13 @@ void main_task(void *pvParameters) {
         printf("%f %f %f %f %f %f %f\n", accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, altitude);
         #endif
 
-        vTaskDelay(pdMS_TO_TICKS(10));
+        // vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
 void app_main() {
-    // task
     ESP_ERROR_CHECK(i2cdev_init());
-
+    
+    // task
     xTaskCreate(main_task, "main_task", configMINIMAL_STACK_SIZE * 8, NULL, 5, NULL);
 }
