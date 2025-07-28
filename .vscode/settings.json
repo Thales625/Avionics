@@ -9,7 +9,8 @@
 	"files.associations": {
 		"mpu6050.h": "c",
 		"bmp280.h": "c",
-		"task.h": "c"
+		"task.h": "c",
+		"hmc5883l.h": "c"
 	},
 	"idf.portWin": "COM5",
 	"idf.port": "/dev/ttyUSB0"
