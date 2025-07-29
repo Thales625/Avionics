@@ -13,9 +13,56 @@ static const char *TAG = "avionics";
 #define SDA_GPIO_PIN 21
 #define SCL_GPIO_PIN 22
 
-// #define DEBUG
+#define PARACHUTE_PIN 18
+
+#define BUZZER_PIN 23
+#define LED_PIN 15
+
+float max_altitude = 0;
+bool parachute_deployed = false;
+
+void beep(int times, int duration) {
+    for (int i = 0; i < times; i++) {
+        digitalWrite(BUZZER_PIN, 1);
+        delay(duration);
+        digitalWrite(BUZZER_PIN, 0);
+        delay(200);
+    }
+}
+
+void deploy_parachute() {
+    ESP_LOGW(TAG, ">>> Parachute ejection <<<");
+    gpio_set_level(PARACHUTE_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    gpio_set_level(PARACHUTE_PIN, 0);
+    parachute_deployed = true;
+}
+
+void check_apogee_and_deploy(float current_altitude) {
+    static int descent_count = 0;
+
+    if (current_altitude > max_altitude) {
+        max_altitude = current_altitude;
+        descent_count = 0;
+    } else {
+        if ((max_altitude - current_altitude) > 5.0) {
+            descent_count++;
+            if (descent_count >= 2 && !parachute_deployed) {
+                deploy_parachute();
+            }
+        }
+    }
+}
 
 void main_task(void *pvParameters) {
+    // PYRO 1
+    gpio_pad_select_gpio(PARACHUTE_PIN);
+    gpio_set_direction(PARACHUTE_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(PARACHUTE_PIN, 0);
+
+    // sensor initialization
+    bool sensor_failed = false;
+
     // BMP280
     bmp280_params_t params;
     bmp280_init_default_params(&params);
@@ -47,6 +94,16 @@ void main_task(void *pvParameters) {
     ESP_LOGI(TAG, "Gyro range:  %d", mpu_dev.ranges.gyro);
     ESP_LOGI(TAG, "Accel range: %d", mpu_dev.ranges.accel);
 
+    // check sensor initialization failed
+    if (sensor_failed) {
+        beep(5, 200);
+        digitalWrite(LED_PIN, 1);
+        return;
+    }
+
+    beep(1, 100);
+    digitalWrite(LED_PIN, 0);
+
     // main loop
     mpu6050_acceleration_t accel = { 0 };
     mpu6050_rotation_t rotation = { 0 };
@@ -74,10 +131,8 @@ void main_task(void *pvParameters) {
         // filtering
         altitude = 44330 * (1.0 - pow(pressure / 1013.25, 0.1903));
 
-        #ifndef DEBUG
-        // acc.x acc.y acc.z rot.x rot.y rot.z altitude
-        printf("%f %f %f %f %f %f %f\n", accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, altitude);
-        #endif
+        // parachute
+        check_apogee_and_deploy(altitude);
 
         // vTaskDelay(pdMS_TO_TICKS(10));
     }
