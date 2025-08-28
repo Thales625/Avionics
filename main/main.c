@@ -24,31 +24,28 @@
 #define SD_MOSI_PIN 25
 #define SD_SCLK_PIN 33
 
-// #define SDCARD
-#define SD_FILE "flightlog.txt"
+#define SD_FILE "datalog.txt"
 
-#define DEBUG
 // #define LIST_FILES
 
 static const char *TAG = "avionics";
 
-float max_altitude = 0;
-bool parachute_deployed = false;
-
 static bmp280_t bmp_dev = { 0 };
 static mpu6050_dev_t mpu_dev = { 0 };
-// static FILE *file_ptr;
+static FILE *file_ptr;
 
-void beep(int times, int duration) {
-    for (int i = 0; i < times; i++) {
-        gpio_set_level(BUZZER_PIN, 1);
-        vTaskDelay(pdMS_TO_TICKS(duration));
-        gpio_set_level(BUZZER_PIN, 0);
-        vTaskDelay(pdMS_TO_TICKS(200));
-    }
+// state
+static float max_altitude = 0;
+static bool parachute_deployed = false;
+
+
+inline static void beep(int duration) {
+    gpio_set_level(BUZZER_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(duration));
+    gpio_set_level(BUZZER_PIN, 0);
 }
 
-void deploy_parachute() {
+inline static void deploy_parachute() {
     ESP_LOGW(TAG, ">>> Parachute ejection <<<");
     gpio_set_level(PARACHUTE_PIN, 1);
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -56,7 +53,7 @@ void deploy_parachute() {
     parachute_deployed = true;
 }
 
-void check_apogee_and_deploy(float current_altitude) {
+inline static void check_apogee_and_deploy(float current_altitude) {
     static int descent_count = 0;
     
     if (current_altitude > max_altitude) {
@@ -73,9 +70,10 @@ void check_apogee_and_deploy(float current_altitude) {
 }
 
 void main_task(void *pvParameters) {
-    // main loop
-    int64_t ut;
-    // char text[128];
+    float ut;
+    const float ut0 = esp_timer_get_time() / 1000;
+
+    char text[128];
 
     // state
     mpu6050_acceleration_t accel = { 0 };
@@ -84,7 +82,10 @@ void main_task(void *pvParameters) {
 
     // main loop
     while (1) {
-        ut = esp_timer_get_time();
+        ut = (float) esp_timer_get_time() / 1000;
+
+        // check time
+        if (ut - ut0 > 5000) break;
 
         // read mpu6050
         ESP_ERROR_CHECK(mpu6050_get_motion(&mpu_dev, &accel, &rotation));
@@ -99,15 +100,12 @@ void main_task(void *pvParameters) {
         // check_apogee_and_deploy(altitude);
 
         // write sdcard
-        #ifdef SDCARD
-		snprintf(text, sizeof(text), "%lld %" PRId32 "", ut / 1000, temperature);
+		snprintf(text, sizeof(text), "%.2f %.2f", ut, temperature);
 		sdcard_write(text, file_ptr);
-        #endif
 
         // LOG
-        #ifdef DEBUG
         ESP_LOGI(TAG, "**********************************************************************");
-        ESP_LOGI(TAG, "UT = %.2f", (float) ut / 1000);
+        ESP_LOGI(TAG, "UT = %.2f", ut);
 
         ESP_LOGI(TAG, "Acceleration: x=%.4f   y=%.4f   z=%.4f", accel.x, accel.y, accel.z);
         ESP_LOGI(TAG, "Rotation:     x=%.4f   y=%.4f   z=%.4f", rotation.x, rotation.y, rotation.z);
@@ -115,10 +113,15 @@ void main_task(void *pvParameters) {
         ESP_LOGI(TAG, "Temperature = %.2f", temperature);
         ESP_LOGI(TAG, "Pressure = %.2f", pressure);
         ESP_LOGI(TAG, "Altitude = %.2f", altitude);
-        #endif
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
+
+    // umount sdcard
+	sdcard_close_file(file_ptr);
+    sdcard_umount();
+
+    beep(1000);
 
     vTaskDelete(NULL);
 }
@@ -144,6 +147,7 @@ void app_main(void) {
     gpio_set_level(LED_PIN, 0);
     gpio_set_level(BUZZER_PIN, 0);
 
+    // TODO: CHECK BMP280 or MPU6050 ERRORS
     // BMP280
     bmp280_params_t params;
     bmp280_init_default_params(&params);
@@ -152,7 +156,6 @@ void app_main(void) {
 
     // MPU6050
     ESP_ERROR_CHECK(mpu6050_init_desc(&mpu_dev, MPU6050_I2C_ADDRESS_LOW, 0, SDA_GPIO_PIN, SCL_GPIO_PIN));
-
     while (1) {
         esp_err_t res = i2c_dev_probe(&mpu_dev.i2c_dev, I2C_DEV_WRITE);
         if (res == ESP_OK) {
@@ -162,40 +165,32 @@ void app_main(void) {
         ESP_LOGE(TAG, "MPU6050 not found");
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
-
     ESP_ERROR_CHECK(mpu6050_init(&mpu_dev));
     ESP_ERROR_CHECK(mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_250));
     ESP_ERROR_CHECK(mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_4));
 
-    ESP_LOGI(TAG, "Gyro range:  %d", mpu_dev.ranges.gyro);
-    ESP_LOGI(TAG, "Accel range: %d", mpu_dev.ranges.accel);
-
-    {
-        // SDCARD
-        #ifdef SDCARD
-        if (sdcard_init(SD_MOSI_PIN, SD_MISO_PIN, SD_SCLK_PIN, SD_CS_PIN) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to initialize SD card");
-            return;
-        }
-        
-        // open/create file
-        if (sdcard_open_file(SD_FILE, "w", &file_ptr) != ESP_OK) {
-            sdcard_umount();
-            ESP_LOGE(TAG, "Failed to open/create file");
-            return;
-        }
-        #endif
-        
-        #ifdef LIST_FILES
-        sdcard_list_files();
-        sdcard_umount();
+    // SDCARD
+    if (sdcard_init(SD_MOSI_PIN, SD_MISO_PIN, SD_SCLK_PIN, SD_CS_PIN) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize SD card");
         return;
-        #endif
+    }
+    
+    #ifdef LIST_FILES
+    sdcard_list_files();
+    sdcard_umount();
+    return;
+    #endif
+
+    // open/create file
+    if (sdcard_open_file(SD_FILE, "w", &file_ptr) != ESP_OK) {
+        sdcard_umount();
+        ESP_LOGE(TAG, "Failed to open/create file");
+        return;
     }
 
     // OUTPUT
     gpio_set_level(LED_PIN, 1);
-    beep(3, 100);
+    beep(500);
     gpio_set_level(LED_PIN, 0);
     
     // task
