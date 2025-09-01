@@ -33,11 +33,7 @@ static const char *TAG = "avionics";
 
 static bmp280_t bmp_dev = { 0 };
 static mpu6050_dev_t mpu_dev = { 0 };
-static FILE *file_ptr;
-
-// state
-static float max_altitude = 0;
-static bool parachute_deployed = false;
+// static FILE *file_ptr;
 
 
 inline static void beep(int duration) {
@@ -46,49 +42,23 @@ inline static void beep(int duration) {
     gpio_set_level(BUZZER_PIN, 0);
 }
 
-inline static void deploy_parachute() {
-    #ifdef DEBUG
-    ESP_LOGW(TAG, ">>> Parachute ejection <<<");
-    #endif
-    gpio_set_level(PARACHUTE_PIN, 1);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    gpio_set_level(PARACHUTE_PIN, 0);
-    parachute_deployed = true;
-}
-
-inline static void check_apogee_and_deploy(float current_altitude) {
-    static int descent_count = 0;
-    
-    if (current_altitude > max_altitude) {
-        max_altitude = current_altitude;
-        descent_count = 0;
-    } else {
-        if ((max_altitude - current_altitude) > 5.0) {
-            descent_count++;
-            if (descent_count >= 2 && !parachute_deployed) {
-                deploy_parachute();
-            }
-        }
-    }
-}
-
 void main_task(void *pvParameters) {
     float ut;
     const float ut0 = esp_timer_get_time() / 1000;
 
-    char text[128];
+    // char text[128];
 
     // state
     mpu6050_acceleration_t accel = { 0 };
     mpu6050_rotation_t rotation = { 0 };
-    float pressure, temperature, altitude;
+    float pressure, temperature;
 
     // main loop
     while (1) {
         ut = (float) esp_timer_get_time() / 1000;
 
         // check time
-        if (ut - ut0 > 5000) break;
+        if (ut - ut0 > 120000) break;
 
         // read mpu6050
         ESP_ERROR_CHECK(mpu6050_get_motion(&mpu_dev, &accel, &rotation));
@@ -97,11 +67,11 @@ void main_task(void *pvParameters) {
         ESP_ERROR_CHECK(bmp280_read_float(&bmp_dev, &temperature, &pressure));
         
         // write sdcard
-		snprintf(text, sizeof(text), "%.2f %.2f", ut, temperature);
-		sdcard_write(text, file_ptr);
+		// snprintf(text, sizeof(text), "%.2f %.2f", ut, temperature);
+		// sdcard_write(text, file_ptr);
 
         // LOG
-        #ifdef DEBUG
+        /*
         ESP_LOGI(TAG, "**********************************************************************");
         ESP_LOGI(TAG, "UT = %.2f", ut);
 
@@ -111,16 +81,18 @@ void main_task(void *pvParameters) {
         ESP_LOGI(TAG, "Temperature = %.2f", temperature);
         ESP_LOGI(TAG, "Pressure = %.2f", pressure);
         ESP_LOGI(TAG, "Altitude = %.2f", altitude);
-        #endif
+        */
+
+        printf("d%.4f\n", pressure);
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     // umount sdcard
-	sdcard_close_file(file_ptr);
-    sdcard_umount();
+	// sdcard_close_file(file_ptr);
+    // sdcard_umount();
 
-    beep(1000);
+    // beep(1000);
 
     vTaskDelete(NULL);
 }
@@ -153,6 +125,10 @@ void app_main(void) {
     ESP_ERROR_CHECK(bmp280_init_desc(&bmp_dev, BMP280_I2C_ADDRESS_0, 0, SDA_GPIO_PIN, SCL_GPIO_PIN));
     ESP_ERROR_CHECK(bmp280_init(&bmp_dev, &params));
 
+
+
+    return;
+
     // MPU6050
     ESP_ERROR_CHECK(mpu6050_init_desc(&mpu_dev, MPU6050_I2C_ADDRESS_LOW, 0, SDA_GPIO_PIN, SCL_GPIO_PIN));
     while (1) {
@@ -169,6 +145,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_4));
 
     // SDCARD
+    /*
     if (sdcard_init(SD_MOSI_PIN, SD_MISO_PIN, SD_SCLK_PIN, SD_CS_PIN) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize SD card");
         return;
@@ -186,10 +163,11 @@ void app_main(void) {
         ESP_LOGE(TAG, "Failed to open/create file");
         return;
     }
+    */
 
     // OUTPUT
     gpio_set_level(LED_PIN, 1);
-    beep(500);
+    // beep(250);
     gpio_set_level(LED_PIN, 0);
     
     // task

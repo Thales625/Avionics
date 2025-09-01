@@ -1,8 +1,8 @@
 if __name__ == "__main__":
 	from serial import Serial
+	import numpy as np
 
-	# PORT = "COM5"
-	PORT = "/dev/ttyUSB1"
+	PORT = "/dev/ttyUSB0"
 	BAUD = 115200
 
 	# initialize serial
@@ -16,30 +16,16 @@ if __name__ == "__main__":
 	MAX_POINTS = 100
 
 	# data timeline
-	data = deque([0]*MAX_POINTS, maxlen=MAX_POINTS)
+	data_baro = deque([0]*MAX_POINTS, maxlen=MAX_POINTS)
+	# data_acc = deque([0]*MAX_POINTS, maxlen=MAX_POINTS)
 
 	# matplotlib
 	fig, ax = plt.subplots()
-	ax.set_title("Barometer")
-	line, = ax.plot(data, label="pressure")
-	ax.set_ylim(-10, 10)
+	ax.set_title("Flight")
+	line_baro, = ax.plot(data_baro, label='baro')
+	# line_acc, = ax.plot(data_acc, label='acc')
+	# ax.set_ylim(-5.0, 5.0)
 	ax.legend()
-
-	# Z-zero
-	z0 = 0
-	while ser.in_waiting:
-		try:
-			reading = ser.readline().decode().strip()
-		except UnicodeDecodeError:
-			continue
-
-		if reading[0] != 'd': continue
-
-		try:
-			z0 = float(reading[1:])
-		except ValueError:
-			print(reading)
-
 
 	# run
 	def update(frame):
@@ -52,14 +38,14 @@ if __name__ == "__main__":
 			if reading[0] != 'd': continue
 
 			try:
-				z = float(reading[1:])
+				values = reading[1:].split(" ")
 
-				data.append(z - z0)
+				data_baro.append(float(values[0]))
 			except ValueError:
 				print(reading)
 
-		line.set_ydata(data)
-		return line
+		line_baro.set_ydata(data_baro)
+		return line_baro
 
 	ani = animation.FuncAnimation(fig, update, interval=10)
 	plt.show()
