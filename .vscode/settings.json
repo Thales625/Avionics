@@ -15,7 +15,8 @@
 		"config.h": "c",
 		"sdcard.h": "c",
 		"esp_timer.h": "c",
-		"math.h": "c"
+		"math.h": "c",
+		"cstdlib": "c"
 	},
 	"idf.portWin": "COM5",
 	"idf.port": "/dev/ttyUSB0"
