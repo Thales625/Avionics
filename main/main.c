@@ -27,7 +27,7 @@
 #define SD_FILE "datalog.txt"
 
 // #define LIST_FILES
-#define DEBUG
+// #define DEBUG
 
 static const char *TAG = "avionics";
 
@@ -38,39 +38,6 @@ static mpu6050_dev_t mpu_dev = { 0 };
 static FILE *file_ptr;
 #endif
 
-typedef enum {
-    SENSOR_ERROR,
-    SDCARD_ERROR
-} AVIONICS_ERROR;
-
-inline static void log_error(AVIONICS_ERROR err) {
-    switch (err) {
-        case SENSOR_ERROR:
-            for (uint32_t i=0; i<5; i++) {
-                gpio_set_level(BUZZER_PIN, 0);
-                gpio_set_level(LED_PIN, 0);
-                vTaskDelay(pdMS_TO_TICKS(333));
-                gpio_set_level(LED_PIN, 1);
-                vTaskDelay(pdMS_TO_TICKS(166));
-                gpio_set_level(BUZZER_PIN, 1);
-                vTaskDelay(pdMS_TO_TICKS(166));
-                gpio_set_level(LED_PIN, 0);
-                vTaskDelay(pdMS_TO_TICKS(333));
-                gpio_set_level(LED_PIN, 1);
-            }
-            gpio_set_level(BUZZER_PIN, 0);
-            gpio_set_level(LED_PIN, 0);
-            break;
-
-        case SDCARD_ERROR:
-            /* code */
-            break;
-        
-        default:
-            break;
-    }
-}
-
 inline static void beep(uint32_t duration) {
     gpio_set_level(BUZZER_PIN, 1);
     vTaskDelay(pdMS_TO_TICKS(duration));
@@ -78,8 +45,8 @@ inline static void beep(uint32_t duration) {
 }
 
 void main_task(void *pvParameters) {
-    float ut;
-    const float ut0 = esp_timer_get_time() / 1000;
+    uint32_t ut;
+    const uint32_t ut0 = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
     #ifndef DEBUG
     char text[128];
@@ -90,12 +57,19 @@ void main_task(void *pvParameters) {
     mpu6050_rotation_t rotation = { 0 };
     float pressure, temperature;
 
+    // OUTPUT: initializing loop
+    beep(500);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    beep(500);
+
+    gpio_set_level(LED_PIN, 1);
+
     // main loop
     while (1) {
-        ut = (float) esp_timer_get_time() / 1000;
+        ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
         // check time
-        if (ut - ut0 > 60000) break;
+        if (ut - ut0 > 10000) break;
 
         // read mpu6050
         ESP_ERROR_CHECK(mpu6050_get_motion(&mpu_dev, &accel, &rotation));
@@ -105,12 +79,13 @@ void main_task(void *pvParameters) {
         
         // write sdcard
         #ifndef DEBUG
-		snprintf(text, sizeof(text), "%.2f %.2f", ut, temperature);
+		snprintf(text, sizeof(text), "%" PRId32 " %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.2f\n", ut, accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, pressure, temperature);
 		sdcard_write(text, file_ptr);
+        printf("d%s", text);
+        #else
+        // printf("d%.4f %.4f %.4f %.4f %.4f %.4f ", accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z); // MPU6050
+        // printf("%.4f %.2f\n", pressure, temperature); // BMP280
         #endif
-
-        printf("d%.4f %.4f %.4f %.4f %.4f %.4f ", accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z); // MPU6050
-        printf("%.4f %.2f\n", pressure, temperature); // BMP280
 
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -121,14 +96,14 @@ void main_task(void *pvParameters) {
     sdcard_umount();
     #endif
 
+    gpio_set_level(LED_PIN, 0);
+
     beep(1000);
 
     vTaskDelete(NULL);
 }
 
 void app_main(void) {
-    vTaskDelay(pdMS_TO_TICKS(5000));
-
     // config GPIO
     ESP_ERROR_CHECK(i2cdev_init());
 
@@ -146,6 +121,9 @@ void app_main(void) {
     gpio_set_level(PARACHUTE_PIN, 0);
     gpio_set_level(LED_PIN, 0);
     gpio_set_level(BUZZER_PIN, 0);
+
+    // flash delay
+    vTaskDelay(pdMS_TO_TICKS(5000));
 
     // BMP280
     bmp280_params_t params;
@@ -166,7 +144,7 @@ void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     ESP_ERROR_CHECK(mpu6050_init(&mpu_dev));
-    ESP_ERROR_CHECK(mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_250));
+    ESP_ERROR_CHECK(mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_500));
     ESP_ERROR_CHECK(mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_4));
 
     #ifndef DEBUG
@@ -189,11 +167,6 @@ void app_main(void) {
         return;
     }
     #endif
-
-    // OUTPUT
-    gpio_set_level(LED_PIN, 1);
-    beep(500);
-    gpio_set_level(LED_PIN, 0);
     
     // task
     xTaskCreate(main_task, "main_task", configMINIMAL_STACK_SIZE * 8, NULL, 5, NULL);
