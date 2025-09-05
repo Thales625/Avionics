@@ -78,27 +78,31 @@ inline static void beep(uint32_t duration) {
 }
 
 void main_task(void *pvParameters) {
-    float ut;
-    const float ut0 = esp_timer_get_time() / 1000;
+    uint32_t ut;
+    const uint32_t ut0 = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
     #ifndef DEBUG
     char text[128];
     #endif
 
     // state
-    mpu6050_acceleration_t accel = { 0 };
-    mpu6050_rotation_t rotation = { 0 };
+    float accel = 0;
+    // mpu6050_acceleration_t accel = { 0 };
+    // mpu6050_rotation_t rotation = { 0 };
     float pressure, temperature;
 
     // main loop
     while (1) {
-        ut = (float) esp_timer_get_time() / 1000;
+        ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
         // check time
+        #ifndef DEBUG
         if (ut - ut0 > 60000) break;
+        #endif
 
         // read mpu6050
-        ESP_ERROR_CHECK(mpu6050_get_motion(&mpu_dev, &accel, &rotation));
+        // ESP_ERROR_CHECK(mpu6050_get_motion(&mpu_dev, &accel, &rotation));
+        ESP_ERROR_CHECK(mpu6050_get_motion_x(&mpu_dev, &accel));
 
         // read bmp280
         ESP_ERROR_CHECK(bmp280_read_float(&bmp_dev, &temperature, &pressure));
@@ -109,8 +113,9 @@ void main_task(void *pvParameters) {
 		sdcard_write(text, file_ptr);
         #endif
 
-        printf("d%.4f %.4f %.4f %.4f %.4f %.4f ", accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z); // MPU6050
-        printf("%.4f %.2f\n", pressure, temperature); // BMP280
+        printf("d%f ", accel); // MPU6050
+        // printf("d%f %f %f %f %f %f ", accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z); // MPU6050
+        printf("%f %f\n", pressure, temperature); // BMP280
 
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -166,7 +171,7 @@ void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     ESP_ERROR_CHECK(mpu6050_init(&mpu_dev));
-    ESP_ERROR_CHECK(mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_250));
+    ESP_ERROR_CHECK(mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_500));
     ESP_ERROR_CHECK(mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_4));
 
     #ifndef DEBUG

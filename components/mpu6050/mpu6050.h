@@ -1694,6 +1694,8 @@ esp_err_t mpu6050_get_raw_rotation_axis(mpu6050_dev_t *dev, mpu6050_axis_t axis,
  *
  * @return `ESP_OK` on success
  */
+
+esp_err_t mpu6050_get_motion_x(mpu6050_dev_t *dev, float *accel_x);
 esp_err_t mpu6050_get_motion(mpu6050_dev_t *dev, mpu6050_acceleration_t *data_accel, mpu6050_rotation_t *data_gyro);
 
 /**

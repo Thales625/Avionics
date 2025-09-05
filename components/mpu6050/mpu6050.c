@@ -841,6 +841,21 @@ esp_err_t mpu6050_set_gyro_offset(mpu6050_dev_t *dev, mpu6050_axis_t axis, int16
     return write_reg_word(dev, gyro_offs_regs[axis], offset);
 }
 
+esp_err_t mpu6050_get_raw_acceleration_x(mpu6050_dev_t *dev, int16_t *raw_accel_x)
+{
+    CHECK_ARG(dev && raw_accel_x);
+
+    uint16_t buf;
+
+    I2C_DEV_TAKE_MUTEX(&dev->i2c_dev);
+    I2C_DEV_CHECK(&dev->i2c_dev, i2c_dev_read_reg(&dev->i2c_dev, MPU6050_REGISTER_ACCEL_XOUT_H, &buf, sizeof(buf)));
+    I2C_DEV_GIVE_MUTEX(&dev->i2c_dev);
+
+    *raw_accel_x = shuffle(buf);
+
+    return ESP_OK;
+}
+
 esp_err_t mpu6050_get_raw_acceleration(mpu6050_dev_t *dev, mpu6050_raw_acceleration_t *raw_accel)
 {
     CHECK_ARG(dev && raw_accel);
@@ -854,6 +869,17 @@ esp_err_t mpu6050_get_raw_acceleration(mpu6050_dev_t *dev, mpu6050_raw_accelerat
     raw_accel->x = shuffle(buf[0]);
     raw_accel->y = shuffle(buf[1]);
     raw_accel->z = shuffle(buf[2]);
+
+    return ESP_OK;
+}
+
+
+esp_err_t mpu6050_get_acceleration_x(mpu6050_dev_t *dev, float *accel_x)
+{
+    int16_t raw;
+    CHECK(mpu6050_get_raw_acceleration_x(dev, &raw));
+
+    *accel_x = get_accel_value(dev, raw);
 
     return ESP_OK;
 }
@@ -938,6 +964,12 @@ esp_err_t mpu6050_get_rotation_axis(mpu6050_dev_t *dev, mpu6050_axis_t axis, flo
 
     *gyro = get_gyro_value(dev, raw);
 
+    return ESP_OK;
+}
+
+esp_err_t mpu6050_get_motion_x(mpu6050_dev_t *dev, float *accel_x)
+{
+    CHECK(mpu6050_get_acceleration_x(dev, accel_x));
     return ESP_OK;
 }
 
