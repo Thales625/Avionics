@@ -79,7 +79,7 @@ if __name__ == "__main__":
 
             # accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, pressure, temperature
             try:
-                values = reading[1:].split(" ")
+                values = reading[1:].split(" ")[1:] # ignore ut
 
                 data_acc_x.append(float(values[0]))
                 data_acc_y.append(float(values[1]))
