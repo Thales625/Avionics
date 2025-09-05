@@ -110,7 +110,15 @@ esp_err_t sdcard_read_file(const char *path) {
 }
 
 esp_err_t sdcard_write(const char *data, FILE *file_ptr) {
-	return fprintf(file_ptr, "%s", data) == 0 ? ESP_OK : ESP_FAIL;
+	int ret = fprintf(file_ptr, "%s", data);
+
+    if (ret < 0) {
+        return ESP_FAIL;
+    }
+
+    fflush(file_ptr);
+
+    return ESP_OK;
 }
 
 esp_err_t sdcard_clear_file(const char *path) {
