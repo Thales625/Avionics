@@ -3,11 +3,11 @@ tools/Analysis/*.txt
 
 # esp-idf
 build/
-sdkconfig
 sdkconfig.old
 
 # project
 tools/*/__pycache__/
+.cache/
 
 # Prerequisites
 *.d
