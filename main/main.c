@@ -131,7 +131,7 @@ void app_main(void) {
         ESP_ERROR_CHECK(bmp280_read_float(&bmp_dev, &temperature, &pressure));
         
         // write sdcard
-		snprintf(text, sizeof(text), "%" PRId32 "%" PRId32 " %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.2f\n", flight_state, ut, accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, pressure, temperature);
+		snprintf(text, sizeof(text), "%d %ld %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.2f\n", flight_state, ut, accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, pressure, temperature);
 		sdcard_write(text, file_ptr);
         printf("d%s", text);
         // printf("d%.4f %.4f %.4f %.4f %.4f %.4f ", accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z); // MPU6050
