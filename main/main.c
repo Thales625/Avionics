@@ -25,12 +25,12 @@ typedef enum {
 
 #define PARACHUTE_PIN 18
 #define BUZZER_PIN 23
-#define LED_PIN 15
+#define LED_PIN 33
 
-#define SD_CS_PIN 26
-#define SD_MISO_PIN 32
-#define SD_MOSI_PIN 25
-#define SD_SCLK_PIN 33
+#define SD_CS_PIN 14
+#define SD_MISO_PIN 27
+#define SD_MOSI_PIN 26
+#define SD_SCLK_PIN 25
 
 #define SD_FILE "datalog.txt"
 
