@@ -12,7 +12,6 @@
 #include "bmp280.h"
 
 typedef enum {
-    STATE_SETUP,
     STATE_PRE_FLIGHT,
     STATE_ASCENT,
     STATE_PARACHUTE_DEPLOY,
@@ -26,11 +25,12 @@ typedef enum {
 #define PARACHUTE_PIN 18
 #define BUZZER_PIN 23
 #define LED_PIN 33
+#define PBUTTON_PIN 4
 
 #define SD_CS_PIN 14
-#define SD_MISO_PIN 27
-#define SD_MOSI_PIN 26
-#define SD_SCLK_PIN 25
+#define SD_MISO_PIN 25
+#define SD_MOSI_PIN 27
+#define SD_SCLK_PIN 26
 
 #define SD_FILE "datalog.txt"
 
@@ -39,7 +39,7 @@ static const char *TAG = "avionics";
 static bmp280_t bmp_dev = { 0 };
 static mpu6050_dev_t mpu_dev = { 0 };
 static FILE *file_ptr;
-static flight_state_t flight_state = STATE_SETUP;
+static flight_state_t flight_state = STATE_PRE_FLIGHT;
 
 inline static void beep(uint32_t duration) {
     gpio_set_level(BUZZER_PIN, 1);
@@ -48,21 +48,22 @@ inline static void beep(uint32_t duration) {
 }
 
 void app_main(void) {
-    // flash delay
-    vTaskDelay(pdMS_TO_TICKS(5000));
-
-    uint32_t ut;
-    char text[128];
-
-    mpu6050_acceleration_t accel = { 0 };
-    mpu6050_rotation_t rotation = { 0 };
-    float pressure, temperature;
+    vTaskDelay(pdMS_TO_TICKS(500));
 
     // config GPIO
     {
         ESP_ERROR_CHECK(i2cdev_init());
+
+        gpio_config_t in_conf = {
+            .pin_bit_mask = (1ULL << PBUTTON_PIN),
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE
+        };
+        ESP_ERROR_CHECK(gpio_config(&in_conf));
         
-        gpio_config_t io_conf = {
+        gpio_config_t out_conf = {
             .pin_bit_mask = (1ULL << PARACHUTE_PIN) | 
                             (1ULL << LED_PIN) | 
                             (1ULL << BUZZER_PIN),
@@ -71,7 +72,7 @@ void app_main(void) {
             .pull_down_en = GPIO_PULLDOWN_DISABLE,
             .intr_type = GPIO_INTR_DISABLE
         };
-        ESP_ERROR_CHECK(gpio_config(&io_conf));
+        ESP_ERROR_CHECK(gpio_config(&out_conf));
 
         gpio_set_level(PARACHUTE_PIN, 0);
         gpio_set_level(LED_PIN, 0);
@@ -111,14 +112,40 @@ void app_main(void) {
             ESP_LOGE(TAG, "Failed to initialize SD card");
             return;
         }
-
-        // open/create file
-        if (sdcard_open_file(SD_FILE, "w", &file_ptr) != ESP_OK) {
-            sdcard_umount();
-            ESP_LOGE(TAG, "Failed to open/create file");
-            return;
-        }
     }
+
+    uint32_t ut;
+    char text[128];
+
+    mpu6050_acceleration_t accel = { 0 };
+    mpu6050_rotation_t rotation = { 0 };
+    float pressure, temperature;
+
+    // SETUP
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    gpio_set_level(LED_PIN, 1);
+
+    beep(500);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    beep(500);
+
+    // WAIT BUTTON
+    while (gpio_get_level(PBUTTON_PIN)) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    // SDCARD: open/create file
+    if (sdcard_open_file(SD_FILE, "w", &file_ptr) != ESP_OK) {
+        sdcard_umount();
+        ESP_LOGE(TAG, "Failed to open/create file");
+        return;
+    }
+
+    gpio_set_level(LED_PIN, 0);
+    beep(300);
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     // main loop
     while (1) {
@@ -139,16 +166,9 @@ void app_main(void) {
 
         // state machine
         switch (flight_state) {
-            case STATE_SETUP: // single itteration
-                flight_state = STATE_PRE_FLIGHT;
-                gpio_set_level(LED_PIN, 1);
-                beep(500);
-                vTaskDelay(pdMS_TO_TICKS(500));
-                beep(500);
-                break;
-
             case STATE_PRE_FLIGHT:
-                 // TODO
+                // TODO
+                flight_state = STATE_SHUTDOWN; // DEBUG
                 break;
 
             case STATE_ASCENT:
@@ -165,19 +185,25 @@ void app_main(void) {
                 break;
 
             case STATE_SHUTDOWN:
+                beep(100);
+
+                gpio_set_level(LED_PIN, 1);
+                vTaskDelay(pdMS_TO_TICKS(300));
                 gpio_set_level(LED_PIN, 0);
-                beep(1000);
-                vTaskDelete(NULL);
+                vTaskDelay(pdMS_TO_TICKS(300));
+                gpio_set_level(LED_PIN, 1);
+                vTaskDelay(pdMS_TO_TICKS(300));
+                gpio_set_level(LED_PIN, 0);
+                vTaskDelay(pdMS_TO_TICKS(300));
+                gpio_set_level(LED_PIN, 1);
+                vTaskDelay(pdMS_TO_TICKS(300));
+                gpio_set_level(LED_PIN, 0);
 
                 // umount sdcard
-                #ifndef DEBUG
                 sdcard_close_file(file_ptr);
                 sdcard_umount();
-                #endif
-
                 return;
         }
-
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
