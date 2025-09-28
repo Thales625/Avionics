@@ -37,6 +37,9 @@ typedef enum {
 #define SD_FILE "datalog.txt"
 #define SD_SYNC_INTERVAL 300 // ms
 
+#define DESCENT_IGNORE_TIME 10000 // ms
+#define DESCENT_MAX_TIME 30000 // ms
+
 static const char *TAG = "avionics";
 
 static bmp280_t bmp_dev = { 0 };
@@ -45,8 +48,6 @@ static FILE *file_ptr;
 static flight_state_t flight_state = STATE_PRE_FLIGHT;
 
 inline static void beep(uint32_t duration) {
-    vTaskDelay(pdMS_TO_TICKS(duration));
-    return; // DEBUG
     gpio_set_level(BUZZER_PIN, 1);
     vTaskDelay(pdMS_TO_TICKS(duration));
     gpio_set_level(BUZZER_PIN, 0);
@@ -132,8 +133,8 @@ void app_main(void) {
     mpu6050_acceleration_t accel = { 0 };
     mpu6050_rotation_t rotation = { 0 };
     float pressure, pressure_0, temperature;
-    float altitude_baro=0.0f, max_altitude_baro=0.0f;
-    uint32_t parachute_ejection_count = 0;
+    float altitude_baro=0.0f, max_altitude_baro=0.0f, prev_altitude_baro=0.0f;
+    uint32_t parachute_ejection_count=0, descent_stable_count=0;
 
     // SETUP
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -160,9 +161,11 @@ void app_main(void) {
 
     ut0 = (uint32_t)(esp_timer_get_time() / 1000ULL);
     ut_sd_sync = ut0;
-    ESP_ERROR_CHECK(bmp280_read_float(&bmp_dev, &temperature, &pressure_0));
 
-    if (pressure_0 <= 0.0f) { // ABORT
+    // ABORT CHECK
+    if (bmp280_read_float(&bmp_dev, &temperature, &pressure_0) != ESP_OK || mpu6050_get_motion(&mpu_dev, &accel, &rotation) != ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        beep(2000);
         return;
     } 
 
@@ -191,10 +194,7 @@ void app_main(void) {
         // state machine
         switch (flight_state) {
             case STATE_PRE_FLIGHT:
-                if (accel.x > 1.7f) {
-                    // flight_state = STATE_ASCENT;
-                    flight_state = STATE_SHUTDOWN; // DEBUG
-                }
+                if (accel.x > 1.7f) flight_state = STATE_ASCENT;
                 break;
 
             case STATE_ASCENT:
@@ -204,13 +204,17 @@ void app_main(void) {
 
                     // altitude_baro = 44330.0f * (1.0f - powf(pressure / pressure_0, 0.1903f));
 
+                    printf("%.4f\n", altitude_baro); // DEBUG
+
                     if (altitude_baro > max_altitude_baro) {
                         max_altitude_baro = altitude_baro;
                         parachute_ejection_count = 0; // reset count
-                    } else if (max_altitude_baro - altitude_baro >= 3.0f) {
+                    } else if (max_altitude_baro - altitude_baro >= 0.2f) {
+                    // } else if (max_altitude_baro - altitude_baro >= 1.0f) {
                         parachute_ejection_count++;
 
-                        if (parachute_ejection_count >= 5) { // EJECT
+                        if (parachute_ejection_count >= 2) { // EJECT
+                        // if (parachute_ejection_count >= 3) { // EJECT
                             flight_state = STATE_PARACHUTE_DEPLOY;
                         }
                     }
@@ -219,12 +223,43 @@ void app_main(void) {
                 break;
 
             case STATE_PARACHUTE_DEPLOY:
-                // TODO
+                gpio_set_level(PARACHUTE_PIN, 1);
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                gpio_set_level(PARACHUTE_PIN, 0);
+
+                prev_altitude_baro = 0.9f * altitude_baro + 0.1f * (44330.0f * (1.0f - powf(pressure / pressure_0, 0.1903f)));
+                ut0 = ut;
+
                 flight_state = STATE_DESCENT;
                 break;
 
             case STATE_DESCENT:
-                // TODO
+                altitude_baro = 0.9f * altitude_baro + 0.1f * (44330.0f * (1.0f - powf(pressure / pressure_0, 0.1903f)));
+
+                if (ut - ut0 < DESCENT_IGNORE_TIME) { // ignore first N sec after parachute ejection
+                    prev_altitude_baro = altitude_baro;
+                    break; 
+                }
+
+                if (ut - ut0 > DESCENT_MAX_TIME) { // check max descent time
+                    flight_state = STATE_SHUTDOWN;
+                    break;
+                }
+
+                printf("%.4f\n", fabsf(altitude_baro - prev_altitude_baro)); // DEBUG
+
+                // check stable baro altitude
+                if (fabsf(altitude_baro - prev_altitude_baro) < 0.5f) {
+                    // descent_stable_count++; // DEBUG
+                } else {
+                    descent_stable_count = 0;
+                }
+                
+                // |ACC| < MAX and altitude_baro stable
+                if (sqrtf(accel.x*accel.x + accel.y*accel.y + accel.z*accel.z) < 1.1 && descent_stable_count > 3) {
+                    flight_state = STATE_SHUTDOWN;
+                    break;
+                }
 
                 // CHECK BUTTON
                 if (!gpio_get_level(PBUTTON_PIN)) flight_state = STATE_SHUTDOWN;
@@ -232,23 +267,19 @@ void app_main(void) {
                 break;
 
             case STATE_SHUTDOWN:
-                beep(100);
-
-                gpio_set_level(LED_PIN, 1);
-                vTaskDelay(pdMS_TO_TICKS(300));
-                gpio_set_level(LED_PIN, 0);
-                vTaskDelay(pdMS_TO_TICKS(300));
-                gpio_set_level(LED_PIN, 1);
-                vTaskDelay(pdMS_TO_TICKS(300));
-                gpio_set_level(LED_PIN, 0);
-                vTaskDelay(pdMS_TO_TICKS(300));
-                gpio_set_level(LED_PIN, 1);
-                vTaskDelay(pdMS_TO_TICKS(300));
-                gpio_set_level(LED_PIN, 0);
-
                 // umount sdcard
                 sdcard_close_file(file_ptr);
                 sdcard_umount();
+
+                beep(200);
+
+                // blinking LED
+                while (1) {
+                    gpio_set_level(LED_PIN, 1);
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    gpio_set_level(LED_PIN, 0);
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                }
                 return;
         }
         vTaskDelay(pdMS_TO_TICKS(10));
