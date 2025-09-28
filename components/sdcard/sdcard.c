@@ -6,6 +6,7 @@
 #include "driver/sdspi_host.h"
 #include "driver/spi_common.h"
 
+#include <unistd.h>
 #include <dirent.h>
 
 #define SD_MOUNT_POINT "/sdcard"
