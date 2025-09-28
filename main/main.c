@@ -4,8 +4,10 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
+#include "driver/i2c.h"
 
 #include <stdio.h>
+#include <math.h>
 
 #include "sdcard.h"
 #include "mpu6050.h"
@@ -33,6 +35,7 @@ typedef enum {
 #define SD_SCLK_PIN 26
 
 #define SD_FILE "datalog.txt"
+#define SD_SYNC_INTERVAL 300 // ms
 
 static const char *TAG = "avionics";
 
@@ -42,6 +45,8 @@ static FILE *file_ptr;
 static flight_state_t flight_state = STATE_PRE_FLIGHT;
 
 inline static void beep(uint32_t duration) {
+    vTaskDelay(pdMS_TO_TICKS(duration));
+    return; // DEBUG
     gpio_set_level(BUZZER_PIN, 1);
     vTaskDelay(pdMS_TO_TICKS(duration));
     gpio_set_level(BUZZER_PIN, 0);
@@ -52,8 +57,6 @@ void app_main(void) {
 
     // config GPIO
     {
-        ESP_ERROR_CHECK(i2cdev_init());
-
         gpio_config_t in_conf = {
             .pin_bit_mask = (1ULL << PBUTTON_PIN),
             .mode = GPIO_MODE_INPUT,
@@ -79,18 +82,26 @@ void app_main(void) {
         gpio_set_level(BUZZER_PIN, 0);
     }
 
+    // I2C
+    {
+        ESP_ERROR_CHECK(i2cdev_init());
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
     // BMP280
     {
         bmp280_params_t params;
         bmp280_init_default_params(&params);
         ESP_ERROR_CHECK(bmp280_init_desc(&bmp_dev, BMP280_I2C_ADDRESS_0, 0, SDA_GPIO_PIN, SCL_GPIO_PIN));
+        vTaskDelay(pdMS_TO_TICKS(200));
         ESP_ERROR_CHECK(bmp280_init(&bmp_dev, &params));
         ESP_LOGI(TAG, "Found BMP280 device");
     }
 
     // MPU6050
     {
-        ESP_ERROR_CHECK(mpu6050_init_desc(&mpu_dev, MPU6050_I2C_ADDRESS_LOW, 0, SDA_GPIO_PIN, SCL_GPIO_PIN));
+        ESP_ERROR_CHECK(mpu6050_init_desc(&mpu_dev, MPU6050_I2C_ADDRESS_LOW, I2C_NUM_0, SDA_GPIO_PIN, SCL_GPIO_PIN));
+        vTaskDelay(pdMS_TO_TICKS(500));
         esp_err_t res;
         while (1) {
             res = i2c_dev_probe(&mpu_dev.i2c_dev, I2C_DEV_WRITE);
@@ -101,11 +112,12 @@ void app_main(void) {
             ESP_LOGE(TAG, "MPU6050 not found");
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
+        vTaskDelay(pdMS_TO_TICKS(100));
         ESP_ERROR_CHECK(mpu6050_init(&mpu_dev));
         ESP_ERROR_CHECK(mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_500));
         ESP_ERROR_CHECK(mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_4));
     }
-   
+
     // SDCARD
     {
         if (sdcard_init(SD_MOSI_PIN, SD_MISO_PIN, SD_SCLK_PIN, SD_CS_PIN) != ESP_OK) {
@@ -114,12 +126,14 @@ void app_main(void) {
         }
     }
 
-    uint32_t ut;
+    uint32_t ut, ut0, ut_sd_sync;
     char text[128];
 
     mpu6050_acceleration_t accel = { 0 };
     mpu6050_rotation_t rotation = { 0 };
-    float pressure, temperature;
+    float pressure, pressure_0, temperature;
+    float altitude_baro=0.0f, max_altitude_baro=0.0f;
+    uint32_t parachute_ejection_count = 0;
 
     // SETUP
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -131,9 +145,7 @@ void app_main(void) {
     beep(500);
 
     // WAIT BUTTON
-    while (gpio_get_level(PBUTTON_PIN)) {
-        vTaskDelay(pdMS_TO_TICKS(200));
-    }
+    while (gpio_get_level(PBUTTON_PIN)) vTaskDelay(pdMS_TO_TICKS(200));
 
     // SDCARD: open/create file
     if (sdcard_open_file(SD_FILE, "w", &file_ptr) != ESP_OK) {
@@ -143,9 +155,16 @@ void app_main(void) {
     }
 
     gpio_set_level(LED_PIN, 0);
+    vTaskDelay(pdMS_TO_TICKS(5000)); // wait 5 sec
     beep(300);
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    ut0 = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    ut_sd_sync = ut0;
+    ESP_ERROR_CHECK(bmp280_read_float(&bmp_dev, &temperature, &pressure_0));
+
+    if (pressure_0 <= 0.0f) { // ABORT
+        return;
+    } 
 
     // main loop
     while (1) {
@@ -160,19 +179,43 @@ void app_main(void) {
         // write sdcard
 		snprintf(text, sizeof(text), "%d %ld %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.2f\n", flight_state, ut, accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, pressure, temperature);
 		sdcard_write(text, file_ptr);
+
         printf("d%s", text);
-        // printf("d%.4f %.4f %.4f %.4f %.4f %.4f ", accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z); // MPU6050
-        // printf("%.4f %.2f\n", pressure, temperature); // BMP280
+
+        // sync sdcard
+        if (ut - ut_sd_sync > SD_SYNC_INTERVAL) {
+            sdcard_sync(file_ptr);
+            ut_sd_sync = ut;
+        }
 
         // state machine
         switch (flight_state) {
             case STATE_PRE_FLIGHT:
-                // TODO
-                flight_state = STATE_SHUTDOWN; // DEBUG
+                if (accel.x > 1.7f) {
+                    // flight_state = STATE_ASCENT;
+                    flight_state = STATE_SHUTDOWN; // DEBUG
+                }
                 break;
 
             case STATE_ASCENT:
-                 // TODO
+                if (pressure > 0.0f) {
+                    // filter
+                    altitude_baro = 0.9f * altitude_baro + 0.1f * (44330.0f * (1.0f - powf(pressure / pressure_0, 0.1903f)));
+
+                    // altitude_baro = 44330.0f * (1.0f - powf(pressure / pressure_0, 0.1903f));
+
+                    if (altitude_baro > max_altitude_baro) {
+                        max_altitude_baro = altitude_baro;
+                        parachute_ejection_count = 0; // reset count
+                    } else if (max_altitude_baro - altitude_baro >= 3.0f) {
+                        parachute_ejection_count++;
+
+                        if (parachute_ejection_count >= 5) { // EJECT
+                            flight_state = STATE_PARACHUTE_DEPLOY;
+                        }
+                    }
+                }
+
                 break;
 
             case STATE_PARACHUTE_DEPLOY:
@@ -182,6 +225,10 @@ void app_main(void) {
 
             case STATE_DESCENT:
                 // TODO
+
+                // CHECK BUTTON
+                if (!gpio_get_level(PBUTTON_PIN)) flight_state = STATE_SHUTDOWN;
+
                 break;
 
             case STATE_SHUTDOWN:
