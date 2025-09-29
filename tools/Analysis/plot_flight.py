@@ -1,4 +1,4 @@
-from math import log
+from math import log, sqrt
 
 def pressure_to_altitude(pressure):
     P0 = 1013.25
@@ -40,6 +40,7 @@ if __name__ == "__main__":
     file_path = args.file.expanduser()
 
     # data
+    state = []
     times = []
 
     accel_x = []
@@ -55,7 +56,7 @@ if __name__ == "__main__":
 
     altitude = []
 
-    # ut, accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, pressure, temperature
+    # state, ut, accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, pressure, temperature
 
     # read file
     try:
@@ -66,21 +67,20 @@ if __name__ == "__main__":
                 if not line: continue
 
                 part = line.split()
-                
-                if int(part[0]) > 40000: break # stop at 40 sec
 
-                times.append(int(part[0]))
+                state.append(int(part[0]))
+                times.append(int(part[1])/1000)
 
-                accel_x.append(float(part[1]))
-                accel_y.append(float(part[2]))
-                accel_z.append(float(part[3]))
+                accel_x.append(float(part[2]))
+                accel_y.append(float(part[3]))
+                accel_z.append(float(part[4]))
 
-                rot_x.append(float(part[4]))
-                rot_y.append(float(part[5]))
-                rot_z.append(float(part[6]))
+                rot_x.append(float(part[5]))
+                rot_y.append(float(part[6]))
+                rot_z.append(float(part[7]))
 
-                pressure.append(float(part[7]))
-                temperature.append(float(part[8]))
+                pressure.append(float(part[8]))
+                temperature.append(float(part[9]))
 
                 altitude.append(pressure_to_altitude_temp(pressure[-1], temperature[-1]))
                 # altitude.append(pressure_to_altitude(pressure[-1]))
@@ -88,23 +88,30 @@ if __name__ == "__main__":
         print(f"Error reading file: {e}")
         exit()
 
+    times = [t - times[0] for t in times]
+
     print(f"Altitude variation: {max(altitude)-min(altitude):.2f} m")
     
     # plot data
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, sharex=True, figsize=(8, 6))
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, sharex=True, figsize=(8, 6))
 
-    ax1.plot(times, pressure)
+    ax1.plot(times, [sqrt(accel_x[i]**2 + accel_y[i]**2 + accel_z[i]**2) for i in range(len(times))])
     ax1.grid(True)
-    ax1.set_title("Pressure")
+    ax1.set_title("Accel")
 
-    ax2.plot(times, temperature)
+    ax2.plot(times, altitude)
     ax2.grid(True)
-    ax2.set_title("Temperature")
+    ax2.set_title("Altitude")
 
-    ax3.plot(times, altitude)
+    ax3.plot(times, state)
     ax3.grid(True)
-    ax3.set_title("Altitude")
+    ax3.set_title("State")
 
-    plt.xlabel(r"Time $\left[ms\right]$")
+    ax4.plot(times, [rot_x[i] for i in range(len(times))])
+    # ax4.plot(times, [sqrt(rot_x[i]**2 + rot_y[i]**2 + rot_z[i]**2) for i in range(len(times))])
+    ax4.grid(True)
+    ax4.set_title("Rotation")
+
+    plt.xlabel(r"Time $\left[s\right]$")
     plt.tight_layout()
     plt.show()
