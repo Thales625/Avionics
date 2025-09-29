@@ -40,6 +40,8 @@ typedef enum {
 #define DESCENT_IGNORE_TIME 10000 // ms
 #define DESCENT_MAX_TIME 30000 // ms
 
+// #define DEBUG
+
 static const char *TAG = "avionics";
 
 static bmp280_t bmp_dev = { 0 };
@@ -51,6 +53,11 @@ inline static void beep(uint32_t duration) {
     gpio_set_level(BUZZER_PIN, 1);
     vTaskDelay(pdMS_TO_TICKS(duration));
     gpio_set_level(BUZZER_PIN, 0);
+}
+
+inline static void avionics_abort(void) {
+    beep(5000);
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
 void app_main(void) {
@@ -83,6 +90,29 @@ void app_main(void) {
         gpio_set_level(BUZZER_PIN, 0);
     }
 
+    /*
+    // GROUND TEST
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    while (gpio_get_level(PBUTTON_PIN)) vTaskDelay(pdMS_TO_TICKS(200));
+    beep(1000);
+    vTaskDelay(pdMS_TO_TICKS(60000));
+    beep(2000);
+    vTaskDelay(pdMS_TO_TICKS(30000));
+
+    beep(1000);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    beep(1000);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    beep(1000);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    gpio_set_level(PARACHUTE_PIN, 1);
+
+    vTaskDelay(pdMS_TO_TICKS(10000));
+
+    return;
+    */
+
     // I2C
     {
         ESP_ERROR_CHECK(i2cdev_init());
@@ -102,7 +132,7 @@ void app_main(void) {
     // MPU6050
     {
         ESP_ERROR_CHECK(mpu6050_init_desc(&mpu_dev, MPU6050_I2C_ADDRESS_LOW, I2C_NUM_0, SDA_GPIO_PIN, SCL_GPIO_PIN));
-        vTaskDelay(pdMS_TO_TICKS(500));
+        vTaskDelay(pdMS_TO_TICKS(200));
         esp_err_t res;
         while (1) {
             res = i2c_dev_probe(&mpu_dev.i2c_dev, I2C_DEV_WRITE);
@@ -113,15 +143,38 @@ void app_main(void) {
             ESP_LOGE(TAG, "MPU6050 not found");
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(200));
         ESP_ERROR_CHECK(mpu6050_init(&mpu_dev));
         ESP_ERROR_CHECK(mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_500));
         ESP_ERROR_CHECK(mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_4));
     }
 
+    // DEBUG
+    #ifdef DEBUG
+    {
+        beep(500);
+
+        mpu6050_acceleration_t accel_ = { 0 };
+        mpu6050_rotation_t rotation_ = { 0 };
+
+        float pressure_, temperature_;
+
+        while (1) {
+            ESP_ERROR_CHECK(mpu6050_get_motion(&mpu_dev, &accel_, &rotation_));
+            ESP_ERROR_CHECK(bmp280_read_float(&bmp_dev, &temperature_, &pressure_));
+
+            printf("%.4f %.4f\n", accel_.x, pressure_);
+
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+    #endif
+
     // SDCARD
     {
         if (sdcard_init(SD_MOSI_PIN, SD_MISO_PIN, SD_SCLK_PIN, SD_CS_PIN) != ESP_OK) {
+            abort();
+            sdcard_umount();
             ESP_LOGE(TAG, "Failed to initialize SD card");
             return;
         }
@@ -137,8 +190,6 @@ void app_main(void) {
     uint32_t parachute_ejection_count=0, descent_stable_count=0;
 
     // SETUP
-    vTaskDelay(pdMS_TO_TICKS(500));
-
     gpio_set_level(LED_PIN, 1);
 
     beep(500);
@@ -150,24 +201,24 @@ void app_main(void) {
 
     // SDCARD: open/create file
     if (sdcard_open_file(SD_FILE, "w", &file_ptr) != ESP_OK) {
+        abort();
         sdcard_umount();
         ESP_LOGE(TAG, "Failed to open/create file");
         return;
     }
 
+    // ABORT CHECK
+    if (bmp280_read_float(&bmp_dev, &temperature, &pressure_0) != ESP_OK || mpu6050_get_motion(&mpu_dev, &accel, &rotation) != ESP_OK) {
+        abort();
+        return;
+    } 
+
     gpio_set_level(LED_PIN, 0);
-    vTaskDelay(pdMS_TO_TICKS(5000)); // wait 5 sec
+    vTaskDelay(pdMS_TO_TICKS(90000)); // wait 90 sec
     beep(300);
 
     ut0 = (uint32_t)(esp_timer_get_time() / 1000ULL);
     ut_sd_sync = ut0;
-
-    // ABORT CHECK
-    if (bmp280_read_float(&bmp_dev, &temperature, &pressure_0) != ESP_OK || mpu6050_get_motion(&mpu_dev, &accel, &rotation) != ESP_OK) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        beep(2000);
-        return;
-    } 
 
     // main loop
     while (1) {
@@ -183,7 +234,7 @@ void app_main(void) {
 		snprintf(text, sizeof(text), "%d %ld %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.2f\n", flight_state, ut, accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, pressure, temperature);
 		sdcard_write(text, file_ptr);
 
-        printf("d%s", text);
+        // printf("d%s", text);
 
         // sync sdcard
         if (ut - ut_sd_sync > SD_SYNC_INTERVAL) {
@@ -194,7 +245,7 @@ void app_main(void) {
         // state machine
         switch (flight_state) {
             case STATE_PRE_FLIGHT:
-                if (accel.x > 1.7f) flight_state = STATE_ASCENT;
+                if (accel.x > 2.0f) flight_state = STATE_ASCENT;
                 break;
 
             case STATE_ASCENT:
@@ -204,17 +255,15 @@ void app_main(void) {
 
                     // altitude_baro = 44330.0f * (1.0f - powf(pressure / pressure_0, 0.1903f));
 
-                    printf("%.4f\n", altitude_baro); // DEBUG
+                    // printf("%.4f\n", altitude_baro); // DEBUG
 
                     if (altitude_baro > max_altitude_baro) {
                         max_altitude_baro = altitude_baro;
                         parachute_ejection_count = 0; // reset count
-                    } else if (max_altitude_baro - altitude_baro >= 0.2f) {
-                    // } else if (max_altitude_baro - altitude_baro >= 1.0f) {
+                    } else if (max_altitude_baro - altitude_baro >= 1.0f) {
                         parachute_ejection_count++;
 
-                        if (parachute_ejection_count >= 2) { // EJECT
-                        // if (parachute_ejection_count >= 3) { // EJECT
+                        if (parachute_ejection_count >= 5) { // EJECT
                             flight_state = STATE_PARACHUTE_DEPLOY;
                         }
                     }
@@ -223,9 +272,9 @@ void app_main(void) {
                 break;
 
             case STATE_PARACHUTE_DEPLOY:
-                gpio_set_level(PARACHUTE_PIN, 1);
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                gpio_set_level(PARACHUTE_PIN, 0);
+                // gpio_set_level(PARACHUTE_PIN, 1);
+                // vTaskDelay(pdMS_TO_TICKS(1000));
+                // gpio_set_level(PARACHUTE_PIN, 0);
 
                 prev_altitude_baro = 0.9f * altitude_baro + 0.1f * (44330.0f * (1.0f - powf(pressure / pressure_0, 0.1903f)));
                 ut0 = ut;
@@ -246,11 +295,11 @@ void app_main(void) {
                     break;
                 }
 
-                printf("%.4f\n", fabsf(altitude_baro - prev_altitude_baro)); // DEBUG
+                // printf("%.4f\n", fabsf(altitude_baro - prev_altitude_baro)); // DEBUG
 
                 // check stable baro altitude
                 if (fabsf(altitude_baro - prev_altitude_baro) < 0.5f) {
-                    // descent_stable_count++; // DEBUG
+                    descent_stable_count++;
                 } else {
                     descent_stable_count = 0;
                 }
@@ -274,7 +323,7 @@ void app_main(void) {
                 beep(200);
 
                 // blinking LED
-                while (1) {
+                while (gpio_get_level(PBUTTON_PIN)) {
                     gpio_set_level(LED_PIN, 1);
                     vTaskDelay(pdMS_TO_TICKS(500));
                     gpio_set_level(LED_PIN, 0);
