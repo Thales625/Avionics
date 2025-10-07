@@ -208,7 +208,7 @@ void app_main(void) {
     }
 
     // ABORT CHECK
-    if (bmp280_read_float(&bmp_dev, &temperature, &pressure_0) != ESP_OK || mpu6050_get_motion(&mpu_dev, &accel, &rotation) != ESP_OK) {
+    if (bmp280_read_float(&bmp_dev, &temperature, &pressure) != ESP_OK || mpu6050_get_motion(&mpu_dev, &accel, &rotation) != ESP_OK) {
         abort();
         return;
     } 
@@ -216,6 +216,8 @@ void app_main(void) {
     gpio_set_level(LED_PIN, 0);
     vTaskDelay(pdMS_TO_TICKS(90000)); // wait 90 sec
     beep(300);
+
+    ESP_ERROR_CHECK(bmp280_read_float(&bmp_dev, &temperature, &pressure_0)); // read initial pressure
 
     ut0 = (uint32_t)(esp_timer_get_time() / 1000ULL);
     ut_sd_sync = ut0;
@@ -245,7 +247,7 @@ void app_main(void) {
         // state machine
         switch (flight_state) {
             case STATE_PRE_FLIGHT:
-                if (accel.x > 2.0f) flight_state = STATE_ASCENT;
+                if (accel.x > 1.8f) flight_state = STATE_ASCENT;
                 break;
 
             case STATE_ASCENT:
@@ -265,6 +267,7 @@ void app_main(void) {
 
                         if (parachute_ejection_count >= 5) { // EJECT
                             flight_state = STATE_PARACHUTE_DEPLOY;
+                            ut0 = ut;
                         }
                     }
                 }
@@ -272,9 +275,11 @@ void app_main(void) {
                 break;
 
             case STATE_PARACHUTE_DEPLOY:
-                // gpio_set_level(PARACHUTE_PIN, 1);
-                // vTaskDelay(pdMS_TO_TICKS(1000));
-                // gpio_set_level(PARACHUTE_PIN, 0);
+                gpio_set_level(PARACHUTE_PIN, 1);
+
+                if (ut - ut0 < 5000) break;
+
+                gpio_set_level(PARACHUTE_PIN, 0);
 
                 prev_altitude_baro = 0.9f * altitude_baro + 0.1f * (44330.0f * (1.0f - powf(pressure / pressure_0, 0.1903f)));
                 ut0 = ut;
