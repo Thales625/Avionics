@@ -1,22 +1,4 @@
-from math import log, sqrt
-
-def pressure_to_altitude(pressure):
-    P0 = 1013.25
-    T0 = 288.15
-    L = 0.0065
-    R = 287.05
-    g = 9.80665
-
-    return (T0 / L) * (1 - (pressure / P0) ** (R * L / g))
-
-def pressure_to_altitude_temp(pressure, temperature):
-    P0 = 101325.0
-    R = 8.314462618
-    g = 9.80665
-    M = 0.0289644
-    temp_k = temperature + 273.15
-
-    return (R * temp_k) / (g * M) * log(P0 / (100*pressure))
+from math import sqrt, pow
 
 if __name__ == "__main__":
     import argparse
@@ -56,6 +38,9 @@ if __name__ == "__main__":
 
     altitude = []
 
+    pressure_0 = None
+    altitude_baro = 0.0
+
     # state, ut, accel.x, accel.y, accel.z, rotation.x, rotation.y, rotation.z, pressure, temperature
 
     # read file
@@ -69,7 +54,8 @@ if __name__ == "__main__":
                 part = line.split()
 
                 state.append(int(part[0]))
-                times.append(int(part[1])/1000)
+                times.append(int(part[1]))
+                # times.append(int(part[1])/1000)
 
                 accel_x.append(float(part[2]))
                 accel_y.append(float(part[3]))
@@ -82,33 +68,47 @@ if __name__ == "__main__":
                 pressure.append(float(part[8]))
                 temperature.append(float(part[9]))
 
-                altitude.append(pressure_to_altitude_temp(pressure[-1], temperature[-1]))
-                # altitude.append(pressure_to_altitude(pressure[-1]))
+                if pressure_0 is None: pressure_0 = pressure[-1]
+
+                altitude_baro = 0.9 * altitude_baro + 0.1 * (44330.0 * (1.0 - pow(pressure[-1] / pressure_0, 0.1903)))
+
+                altitude.append(altitude_baro)
     except Exception as e:
         print(f"Error reading file: {e}")
         exit()
 
-    times = [t - times[0] for t in times]
+    # time analysis
+    '''
+    import numpy as np
+    times = np.array(times) - times[0]
+    plt.plot(times[:-1], np.diff(times))
+    plt.show()
+    exit()
+    '''
+
+    # 2.266 (video) => 57.9191 (graph)
+    times = [t - times[0] - 57.9191 + 2.266 for t in times]
 
     print(f"Altitude variation: {max(altitude)-min(altitude):.2f} m")
     
     # plot data
     fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, sharex=True, figsize=(8, 6))
 
-    ax1.plot(times, [sqrt(accel_x[i]**2 + accel_y[i]**2 + accel_z[i]**2) for i in range(len(times))])
+    ax1.plot(times, state)
     ax1.grid(True)
-    ax1.set_title("Accel")
+    ax1.set_title("State")
 
     ax2.plot(times, altitude)
+    # ax2.plot(times, [44330.0 * (1.0 - pow(pressure[i] / pressure_0, 0.1903)) for i in range(len(times))]) # raw
     ax2.grid(True)
     ax2.set_title("Altitude")
 
-    ax3.plot(times, state)
+    # ax3.plot(times, [sqrt(accel_x[i]**2 + accel_y[i]**2 + accel_z[i]**2) for i in range(len(times))])
+    ax3.plot(times, [accel_x[i] for i in range(len(times))])
     ax3.grid(True)
-    ax3.set_title("State")
+    ax3.set_title("Accel")
 
-    ax4.plot(times, [rot_x[i] for i in range(len(times))])
-    # ax4.plot(times, [sqrt(rot_x[i]**2 + rot_y[i]**2 + rot_z[i]**2) for i in range(len(times))])
+    ax4.plot(times, [sqrt(rot_x[i]**2 + rot_y[i]**2 + rot_z[i]**2) for i in range(len(times))])
     ax4.grid(True)
     ax4.set_title("Rotation")
 

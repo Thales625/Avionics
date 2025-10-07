@@ -1,5 +1,6 @@
 # data
 tools/Analysis/*.txt
+tools/Simulation/*.txt
 
 # esp-idf
 build/
