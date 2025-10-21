@@ -99,7 +99,6 @@ if __name__ == "__main__":
     ax1.set_title("State")
 
     ax2.plot(times, altitude)
-    # ax2.plot(times, [44330.0 * (1.0 - pow(pressure[i] / pressure_0, 0.1903)) for i in range(len(times))]) # raw
     ax2.grid(True)
     ax2.set_title("Altitude")
 

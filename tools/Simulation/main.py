@@ -27,18 +27,23 @@ if __name__ == "__main__":
     velocity_arr = []
     acc_arr = []
 
-    dt = 0.05
+    dt = 10 * 1e-3
     t = 0.
-    while t < 8: # True
+    alt_sensor = 0.
+    while t < 8:
         vessel.update(dt, t)
 
-        time_arr.append(t)
-        altitude_arr.append(vessel.baro())
-        # altitude_arr.append(vessel.altitude)
-        velocity_arr.append(vessel.acc())
-        acc_arr.append(vessel.acceleration)
+        alt_sensor = alt_sensor * 0.9 + vessel.baro(t) * 0.1
 
-        avionics.loop(vessel.baro(), vessel.acc(), int(t*1000))
+        # alt_sensor = vessel.baro(t)
+        acc_sensor = vessel.acc(t)
+
+        time_arr.append(t)
+        altitude_arr.append(alt_sensor)
+        velocity_arr.append(vessel.velocity)
+        acc_arr.append(acc_sensor)
+
+        avionics.loop(alt_sensor, acc_sensor, int(t*1000))
 
         # print("Avionics: ", avionics.loop(vessel.baro(), vessel.acc(), int(t)).decode("utf-8"))
 
