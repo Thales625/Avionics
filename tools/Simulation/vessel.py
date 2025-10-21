@@ -21,6 +21,15 @@ class Vessel:
         # self.cd = 0.6
         self.radius = 0.1
 
+        # sensors
+        self.baro_delay = 275e-3
+        self._baro = 0.0
+        self._baro_t = 0.0
+
+        self.acc_delay = 1 * 1e-3
+        self._acc = 0.0
+        self._acc_t = 0.0
+
         # solver
         def dSdt(S, t):
             h, v, = S
@@ -78,8 +87,14 @@ class Vessel:
         self.solver.step(ut, dt)
 
     # sensors
-    def baro(self):
-        return self.altitude + np.random.normal(0, 0.5)
+    def baro(self, t):
+        if t - self._baro_t >= self.baro_delay:
+            self._baro = self.altitude + np.random.normal(0, 0.5)
+            self._baro_t = t
+        return self._baro
 
-    def acc(self):
-        return self.acceleration + np.random.normal(0, 0.1)
+    def acc(self, t):
+        if t - self._acc_t >= self.acc_delay:
+            self._acc = self.acceleration + np.random.normal(0, 0.1)
+            self._acc_t = t
+        return self._acc

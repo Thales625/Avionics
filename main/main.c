@@ -50,9 +50,9 @@ static FILE *file_ptr;
 static flight_state_t flight_state = STATE_PRE_FLIGHT;
 
 inline static void beep(uint32_t duration) {
-    gpio_set_level(BUZZER_PIN, 1);
-    vTaskDelay(pdMS_TO_TICKS(duration));
     gpio_set_level(BUZZER_PIN, 0);
+    vTaskDelay(pdMS_TO_TICKS(duration));
+    gpio_set_level(BUZZER_PIN, 1);
 }
 
 inline static void avionics_abort(void) {
@@ -86,17 +86,16 @@ void app_main(void) {
         ESP_ERROR_CHECK(gpio_config(&out_conf));
 
         gpio_set_level(PARACHUTE_PIN, 0);
-        gpio_set_level(LED_PIN, 0);
-        gpio_set_level(BUZZER_PIN, 0);
+        gpio_set_level(LED_PIN, 1);
+        gpio_set_level(BUZZER_PIN, 1);
     }
 
     /*
     // GROUND TEST
     vTaskDelay(pdMS_TO_TICKS(1000));
     while (gpio_get_level(PBUTTON_PIN)) vTaskDelay(pdMS_TO_TICKS(200));
-    beep(1000);
-    vTaskDelay(pdMS_TO_TICKS(60000));
-    beep(2000);
+    beep(300);
+
     vTaskDelay(pdMS_TO_TICKS(30000));
 
     beep(1000);
@@ -109,6 +108,8 @@ void app_main(void) {
     gpio_set_level(PARACHUTE_PIN, 1);
 
     vTaskDelay(pdMS_TO_TICKS(10000));
+
+    gpio_set_level(PARACHUTE_PIN, 0);
 
     return;
     */
@@ -190,7 +191,7 @@ void app_main(void) {
     uint32_t parachute_ejection_count=0, descent_stable_count=0;
 
     // SETUP
-    gpio_set_level(LED_PIN, 1);
+    gpio_set_level(LED_PIN, 0);
 
     beep(500);
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -213,8 +214,8 @@ void app_main(void) {
         return;
     } 
 
-    gpio_set_level(LED_PIN, 0);
-    vTaskDelay(pdMS_TO_TICKS(90000)); // wait 90 sec
+    gpio_set_level(LED_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(5000)); // wait 5 sec
     beep(300);
 
     ESP_ERROR_CHECK(bmp280_read_float(&bmp_dev, &temperature, &pressure_0)); // read initial pressure
@@ -329,9 +330,9 @@ void app_main(void) {
 
                 // blinking LED
                 while (gpio_get_level(PBUTTON_PIN)) {
-                    gpio_set_level(LED_PIN, 1);
-                    vTaskDelay(pdMS_TO_TICKS(500));
                     gpio_set_level(LED_PIN, 0);
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    gpio_set_level(LED_PIN, 1);
                     vTaskDelay(pdMS_TO_TICKS(500));
                 }
                 return;
