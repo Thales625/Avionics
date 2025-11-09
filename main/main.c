@@ -41,6 +41,7 @@ typedef enum {
 #define DESCENT_MAX_TIME 30000 // ms
 
 // #define DEBUG
+// #define GROUND_TEST
 
 static const char *TAG = "avionics";
 
@@ -61,8 +62,6 @@ inline static void avionics_abort(void) {
 }
 
 void app_main(void) {
-    vTaskDelay(pdMS_TO_TICKS(500));
-
     // config GPIO
     {
         gpio_config_t in_conf = {
@@ -89,30 +88,6 @@ void app_main(void) {
         gpio_set_level(LED_PIN, 1);
         gpio_set_level(BUZZER_PIN, 1);
     }
-
-    /*
-    // GROUND TEST
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    while (gpio_get_level(PBUTTON_PIN)) vTaskDelay(pdMS_TO_TICKS(200));
-    beep(300);
-
-    vTaskDelay(pdMS_TO_TICKS(30000));
-
-    beep(1000);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    beep(1000);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    beep(1000);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    gpio_set_level(PARACHUTE_PIN, 1);
-
-    vTaskDelay(pdMS_TO_TICKS(10000));
-
-    gpio_set_level(PARACHUTE_PIN, 0);
-
-    return;
-    */
 
     // I2C
     {
@@ -149,6 +124,31 @@ void app_main(void) {
         ESP_ERROR_CHECK(mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_500));
         ESP_ERROR_CHECK(mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_4));
     }
+
+    // GROUND TEST
+    #ifdef GROUND_TEST
+    {
+        // WAIT BUTTON
+        while (gpio_get_level(PBUTTON_PIN)) vTaskDelay(pdMS_TO_TICKS(200));
+
+        vTaskDelay(pdMS_TO_TICKS(3000));
+
+        beep(1000);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        beep(1000);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        beep(1000);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        beep(2000);
+
+        gpio_set_level(PARACHUTE_PIN, 1);
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        gpio_set_level(PARACHUTE_PIN, 0);
+
+        beep(200);
+        return;
+    }
+    #endif
 
     // DEBUG
     #ifdef DEBUG
@@ -192,9 +192,9 @@ void app_main(void) {
 
     // SETUP
     gpio_set_level(LED_PIN, 0);
+    
+    vTaskDelay(pdMS_TO_TICKS(8000));
 
-    beep(500);
-    vTaskDelay(pdMS_TO_TICKS(500));
     beep(500);
 
     // WAIT BUTTON
@@ -248,7 +248,8 @@ void app_main(void) {
         // state machine
         switch (flight_state) {
             case STATE_PRE_FLIGHT:
-                if (accel.x > 1.8f) flight_state = STATE_ASCENT;
+                // if (fabs(accel.x) > 1.8f) flight_state = STATE_ASCENT;
+                if (sqrtf(accel.x*accel.x + accel.y*accel.y + accel.z*accel.z) > 1.8f) flight_state = STATE_ASCENT;
                 break;
 
             case STATE_ASCENT:
@@ -278,9 +279,9 @@ void app_main(void) {
             case STATE_PARACHUTE_DEPLOY:
                 gpio_set_level(PARACHUTE_PIN, 1);
 
-                if (ut - ut0 < 5000) break;
+                // if (ut - ut0 < 5000) break;
 
-                gpio_set_level(PARACHUTE_PIN, 0);
+                // gpio_set_level(PARACHUTE_PIN, 0);
 
                 prev_altitude_baro = 0.9f * altitude_baro + 0.1f * (44330.0f * (1.0f - powf(pressure / pressure_0, 0.1903f)));
                 ut0 = ut;
@@ -309,15 +310,9 @@ void app_main(void) {
                 } else {
                     descent_stable_count = 0;
                 }
-                
-                // |ACC| < MAX and altitude_baro stable
-                if (sqrtf(accel.x*accel.x + accel.y*accel.y + accel.z*accel.z) < 1.1 && descent_stable_count > 3) {
-                    flight_state = STATE_SHUTDOWN;
-                    break;
-                }
 
                 // CHECK BUTTON
-                if (!gpio_get_level(PBUTTON_PIN)) flight_state = STATE_SHUTDOWN;
+                if (gpio_get_level(PBUTTON_PIN)) flight_state = STATE_SHUTDOWN;
 
                 break;
 
@@ -326,7 +321,7 @@ void app_main(void) {
                 sdcard_close_file(file_ptr);
                 sdcard_umount();
 
-                beep(200);
+                beep(1000);
 
                 // blinking LED
                 while (gpio_get_level(PBUTTON_PIN)) {
