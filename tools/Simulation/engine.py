@@ -7,6 +7,8 @@ class Engine:
         self._thrust_arr = []
         self._mass_arr = []
 
+        thrust_curve_file = thrust_curve_file.strip()
+
         if thrust_curve_file.endswith(".rse"):
             pass
         elif thrust_curve_file.endswith(".txt"):
@@ -70,9 +72,9 @@ class Engine:
 
     def plot(self):
         plt.plot(self._time_arr, self._thrust_arr)
+        plt.grid()
         plt.show()
 
 if __name__ == "__main__":
     eng = Engine("./thrust.txt")
-    print(eng._mass_arr)
     eng.plot()
