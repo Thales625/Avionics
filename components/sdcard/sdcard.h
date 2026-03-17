@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __SDCARD_H__
+#define __SDCARD_H__
 
 #include "esp_err.h"
 
@@ -12,3 +13,5 @@ esp_err_t sdcard_clear_file(const char *path);
 esp_err_t sdcard_delete_file(const char *path);
 esp_err_t sdcard_close_file(FILE* file_ptr);
 esp_err_t sdcard_umount(void);
+
+#endif
