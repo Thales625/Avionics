@@ -125,8 +125,15 @@ static void avionics_task(void *arg) {
     flight_logic_init(&flight_logic);
     sd_ut_sync = flight_logic.sensor_data.ut;
 
+    // frequency
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xFrequency = pdMS_TO_TICKS(10); // 10 ms
+
     // main loop
     while (1) {
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
+
+        // update ut
         flight_logic.sensor_data.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
         // MPU6050: read data
@@ -175,7 +182,8 @@ static void avionics_task(void *arg) {
             sd_ut_sync = flight_logic.sensor_data.ut;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(10));
+        // set values
+        gpio_set_level(PARACHUTE_PIN, flight_logic.trigger_parachute);
     }
     vTaskDelete(NULL);
 }
