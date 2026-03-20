@@ -17,6 +17,16 @@ if __name__ == "__main__":
     engine = Engine("./thrust.txt")
     vessel.add_engine(engine)
 
+    # init avionics
+    avionics.set_sensors(
+        ut=0, # ms
+        ax=0, ay=0, az=0, 
+        rx=0, ry=0, rz=0, 
+        press=earth.pressure(0), temp=25.0
+    )
+    avionics.init()
+
+    # graph
     true_altitude_arr = []
     true_velocity_arr = []
     true_acceleration_arr = []
@@ -26,8 +36,8 @@ if __name__ == "__main__":
     altitude_arr = []
     state_arr = []
 
-    acc_arr = []
-    baro_arr = []
+    meas_acc_arr = []
+    meas_pressure_arr = []
 
     dt = 10 * 1e-3
     t = 0.
@@ -37,11 +47,9 @@ if __name__ == "__main__":
         baro_sensor = vessel.baro(t)
         acc_sensor = vessel.acc(t)
 
-        # print("SENSOR:", acc_sensor)
-
         avionics.set_sensors(
             ut=t*1000, # ms
-            ax=acc_sensor+9.81, ay=0, az=0, 
+            ax=acc_sensor, ay=0, az=0, 
             rx=0, ry=0, rz=0, 
             press=baro_sensor, temp=25.0
         )
@@ -52,21 +60,21 @@ if __name__ == "__main__":
         altitude_arr.append(avionics.altitude)
         state_arr.append(avionics.state)
 
-        baro_arr.append(baro_sensor)
-        acc_arr.append(acc_sensor)
+        meas_pressure_arr.append(baro_sensor)
+        meas_acc_arr.append(acc_sensor)
 
         true_altitude_arr.append(vessel.altitude)
         true_velocity_arr.append(vessel.velocity)
-        true_acceleration_arr.append(vessel.acceleration)
-        true_pressure_arr.append(Vessel.pressure(vessel.altitude))
+        true_acceleration_arr.append(vessel._acceleration - earth.gravity(0))
+        true_pressure_arr.append(earth.pressure(vessel.altitude))
 
         t += dt
 
     # plotting
-    fig, axs = plt.subplots(5, 1, sharex=True, figsize=(10, 15))
+    fig, axs = plt.subplots(5, 1, sharex=True, figsize=(10, 12))
 
     axs[0].plot(time_arr, true_altitude_arr, label="True Altitude", color="green")
-    axs[0].plot(time_arr, altitude_arr, label="Altitude", color="blue")
+    axs[0].plot(time_arr, altitude_arr, label="Measured Altitude", color="blue")
     axs[0].set_ylabel("Altitude (m)")
     axs[0].legend(loc="upper right")
     axs[0].grid()
@@ -77,22 +85,22 @@ if __name__ == "__main__":
     axs[1].grid()
 
     axs[2].plot(time_arr, true_acceleration_arr, label="True Acceleration", color="green")
-    axs[2].plot(time_arr, acc_arr, label="Acceleration", color="red")
+    axs[2].plot(time_arr, meas_acc_arr, label="Measured Acceleration", color="red")
     axs[2].set_ylabel("Acceleration (m/s²)")
     axs[2].legend(loc="upper right")
     axs[2].grid()
 
     axs[3].plot(time_arr, true_pressure_arr, label="True Pressure", color="green")
-    axs[3].plot(time_arr, baro_arr, label="Pressure", color="red")
-    axs[3].set_ylabel("Pressure")
+    axs[3].plot(time_arr, meas_pressure_arr, label="Measured Pressure", color="red")
+    axs[3].set_ylabel("Pressure (Pa)")
     axs[3].legend(loc="upper right")
     axs[3].grid()
 
-    axs[4].plot(time_arr, state_arr, label="State", color="red")
-    axs[4].set_xlabel("Time (s)")
+    axs[4].step(time_arr, state_arr, label="State", color="red", where="post")
     axs[4].set_ylabel("State")
     axs[4].legend(loc="upper right")
     axs[4].grid()
 
+    plt.xlabel("Time (s)")
     plt.tight_layout()
     plt.show()

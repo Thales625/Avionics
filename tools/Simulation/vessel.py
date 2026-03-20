@@ -9,9 +9,7 @@ class Vessel:
             0., # velocity
         ])
 
-        self.thrust = 0.
-        self.acceleration = 0.
-
+        self.celestial_body = celestial_body
         self.dry_mass = dry_mass
 
         self.engines = []
@@ -22,12 +20,16 @@ class Vessel:
 
         # sensors
         self.baro_delay = 275.0 * 1e-3
-        self._baro = self.pressure(0)
+        self._baro = celestial_body.pressure(0)
         self._baro_t = 0.0
 
         self.acc_delay = 1.0 * 1e-3
         self._acc = celestial_body.gravity(0)
         self._acc_t = 0.0
+
+        # aux variables
+        self._thrust = 0.
+        self._acceleration = 0.
 
         # solver
         def dSdt(S, t):
@@ -41,9 +43,9 @@ class Vessel:
                 v = 0
                 h = 0
 
-            self.acceleration = (
+            self._acceleration = (
                 (
-                    self.thrust +
+                    self._thrust +
                     -(1.57075*self.radius**2)*self.cd*celestial_body.rho(h)*v*abs(v)
                 ) / mass + 
                 celestial_body.gravity(h)
@@ -51,7 +53,7 @@ class Vessel:
 
             return np.array([
                 v,                 # dh/dt
-                self.acceleration, # dv/dt
+                self._acceleration, # dv/dt
             ])
 
         self.solver = RK4(self.state, dSdt)
@@ -78,9 +80,9 @@ class Vessel:
 
     def update(self, dt, ut):
         # update thrust
-        self.thrust = 0.
+        self._thrust = 0.
         for engine in self.engines:
-            self.thrust += engine.thrust(ut)
+            self._thrust += engine.thrust(ut)
 
         # step ivp
         self.solver.step(ut, dt)
@@ -91,17 +93,12 @@ class Vessel:
     # sensors
     def baro(self, t):
         if t - self._baro_t >= self.baro_delay:
-            self._baro = self.pressure(self.altitude) + np.random.normal(0, 0.5)
+            self._baro = self.celestial_body.pressure(self.altitude) + np.random.normal(0, 0.5)
             self._baro_t = t
         return self._baro
 
     def acc(self, t):
         if t - self._acc_t >= self.acc_delay:
-            self._acc = self.acceleration + np.random.normal(0, 0.1)
+            self._acc = self._acceleration + np.random.normal(0, 0.1)
             self._acc_t = t
-        return self._acc
-
-    @classmethod
-    def pressure(cls, altitude):
-        return 101325.*(1.-altitude/44330.)**5.255
-
+        return self._acc - self.celestial_body.gravity(0)
