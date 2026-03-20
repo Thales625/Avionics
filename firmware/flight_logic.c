@@ -50,18 +50,17 @@ void flight_logic_init(flight_logic_t *core) {
 void flight_logic_update(flight_logic_t *core) {
     switch (core->state) {
         case STATE_PRE_FLIGHT:
-			if (fabs(core->sensor_data.accel.x) > 1.8f) core->state = STATE_ASCENT;
+			// if (fabs(core->sensor_data.accel.x) > 1.8f) core->state = STATE_ASCENT;
             
-            // if (sqrtf(core->sensor_data.accel.x*core->sensor_data.accel.x + core->sensor_data.accel.y*core->sensor_data.accel.y + core->sensor_data.accel.z*core->sensor_data.accel.z) > 1.8f) core->state = STATE_ASCENT;
-            //
+            if (sqrtf(core->sensor_data.accel.x*core->sensor_data.accel.x + core->sensor_data.accel.y*core->sensor_data.accel.y + core->sensor_data.accel.z*core->sensor_data.accel.z) > 1.8f) core->state = STATE_ASCENT;
+
             SIM_LOG("ACCEL: %f", core->sensor_data.accel.x);
 
             break;
 
         case STATE_ASCENT:
 			if (core->sensor_data.pressure > 0.0f) {
-				// filter
-				core->altitude_baro = .9f*core->altitude_baro + .1f*(44330.f*(1.f - powf(core->sensor_data.pressure/core->pressure_0, .1903f)));
+                core->altitude_baro = 44330.f*(1.f - powf(core->sensor_data.pressure/core->pressure_0, .1903f));
 
 				if (core->altitude_baro > core->max_altitude_baro) {
 					core->max_altitude_baro = core->altitude_baro;
@@ -82,14 +81,16 @@ void flight_logic_update(flight_logic_t *core) {
         case STATE_PARACHUTE_DEPLOY:
 			core->trigger_parachute = true;
 
-            core->prev_altitude_baro = .9f*core->altitude_baro + .1f*(44330.f*(1.f - powf(core->sensor_data.pressure/core->pressure_0, .1903f)));
+            core->altitude_baro = 44330.f*(1.f - powf(core->sensor_data.pressure/core->pressure_0, .1903f));
 			core->ut_0 = core->sensor_data.ut;
+
+            SIM_LOG("PARACHUTE DEPLOY");
 
             core->state = STATE_DESCENT;
             break;
 
         case STATE_DESCENT:
-            core->altitude_baro = .9f*core->altitude_baro + .1f*(44330.f*(1.f - powf(core->sensor_data.pressure/core->pressure_0, .1903f)));
+            core->altitude_baro = 44330.f*(1.f - powf(core->sensor_data.pressure/core->pressure_0, .1903f));
 
             if (core->sensor_data.ut - core->ut_0 < DESCENT_IGNORE_TIME) { // ignore first N sec after parachute ejection
                 core->prev_altitude_baro = core->altitude_baro;
