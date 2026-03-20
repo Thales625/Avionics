@@ -31,15 +31,28 @@
 
 #define SD_FILE "datalog.txt"
 #define SD_SYNC_INTERVAL 300 // ms
+#define SD_LOG_MAGIC 0xAABBCCDD
 
 static const char* TAG = "avionics";
+
+static flight_logic_t flight_logic;
 
 static bmp280_t bmp_dev = { 0 };
 static mpu6050_dev_t mpu_dev = { 0 };
 
-static uint32_t ut_sd_sync;
-static flight_logic_t flight_logic;
-static char text[128];
+static uint32_t sd_ut_sync;
+
+static struct {
+    uint32_t magic;
+    struct {
+        int state;
+        uint32_t ut;
+        float accel[3];
+        float gyro[3];
+        float pressure;
+        float temperature;
+    } data;
+} sd_log_packet = { SD_LOG_MAGIC, { 0 } };
 
 static void beep(uint32_t duration) {
     gpio_set_level(BUZZER_PIN, 0);
@@ -110,7 +123,7 @@ static void avionics_task(void *arg) {
     // init flight logic core
     flight_logic.sensor_data.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
     flight_logic_init(&flight_logic);
-    ut_sd_sync = flight_logic.sensor_data.ut;
+    sd_ut_sync = flight_logic.sensor_data.ut;
 
     // main loop
     while (1) {
@@ -152,25 +165,14 @@ static void avionics_task(void *arg) {
         flight_logic_update(&flight_logic);
 
         // SDCARD: write
-        snprintf(text, sizeof(text),
-            "%d %" PRIu32 " %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.2f\n",
-            flight_logic.state,
-            flight_logic.sensor_data.ut,
-            flight_logic.sensor_data.accel.x,
-            flight_logic.sensor_data.accel.y,
-            flight_logic.sensor_data.accel.z,
-            flight_logic.sensor_data.rot.x,
-            flight_logic.sensor_data.rot.y,
-            flight_logic.sensor_data.rot.z,
-            flight_logic.sensor_data.pressure,
-            flight_logic.sensor_data.temperature
-        );
-		sdcard_write(text, file_ptr);
+        if (sdcard_write_struct(&sd_log_packet, sizeof(sd_log_packet), file_ptr) != ESP_OK) {
+            ESP_LOGE(TAG, "SD: write failed");
+        }
 
         // SDCARD: sync
-        if (flight_logic.sensor_data.ut - ut_sd_sync > SD_SYNC_INTERVAL) {
-            sdcard_sync(file_ptr);
-            ut_sd_sync = flight_logic.sensor_data.ut;
+        if (flight_logic.sensor_data.ut - sd_ut_sync > SD_SYNC_INTERVAL) {
+            if (sdcard_sync(file_ptr) != ESP_OK) ESP_LOGW(TAG, "SD: sync failed");
+            sd_ut_sync = flight_logic.sensor_data.ut;
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
