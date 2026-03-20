@@ -9,7 +9,10 @@ class CelestialBody:
         return -self.GM / (self.radius+altitude)**2
 
     def rho(self, altitude):
-        return 1.225 * ((2.71828 ** (-altitude / 8500)) if altitude > 0 else 1)
+        return 1.225 * ((2.71828 ** (-altitude / 8500.)) if altitude > 0. else 1.)
+
+    def pressure(self, altitude):
+        return 101325. * (1. - altitude/44330.)**5.255
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt

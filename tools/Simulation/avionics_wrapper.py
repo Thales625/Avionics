@@ -49,7 +49,6 @@ class AvionicsSim:
         self._lib.flight_logic_update.restype = None
         
         self._core = FlightLogic_t()
-        self._lib.flight_logic_init(ctypes.byref(self._core))
 
         # log callback
         CALLBACK_TYPE = ctypes.CFUNCTYPE(None, ctypes.c_char_p)
@@ -58,6 +57,9 @@ class AvionicsSim:
         self._cb = CALLBACK_TYPE(logger)
         self._lib.flight_logic_set_sim_logger.argtypes = [CALLBACK_TYPE]
         self._lib.flight_logic_set_sim_logger(self._cb)
+
+    def init(self):
+        self._lib.flight_logic_init(ctypes.byref(self._core))
 
     def update(self):
         self._lib.flight_logic_update(ctypes.byref(self._core))
