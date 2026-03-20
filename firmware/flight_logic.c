@@ -2,7 +2,6 @@
 
 #include <math.h>
 
-#define DESCENT_IGNORE_TIME 10000 // ms
 #define DESCENT_MAX_TIME 30000 // ms
 
 #ifdef SIMULATION_BUILD
@@ -41,7 +40,6 @@ void flight_logic_init(flight_logic_t *core) {
     core->prev_altitude_baro = 0.0f;
     
     core->parachute_ejection_count = 0;
-    core->descent_stable_count = 0;
 
     core->trigger_parachute = false;
     core->trigger_shutdown = false;
@@ -74,7 +72,6 @@ void flight_logic_update(flight_logic_t *core) {
 					}
 				}
                 SIM_LOG("PRESSURE: %f", core->sensor_data.pressure);
-
 			}
             break;
 
@@ -90,23 +87,10 @@ void flight_logic_update(flight_logic_t *core) {
             break;
 
         case STATE_DESCENT:
-            core->altitude_baro = 44330.f*(1.f - powf(core->sensor_data.pressure/core->pressure_0, .1903f));
-
-            if (core->sensor_data.ut - core->ut_0 < DESCENT_IGNORE_TIME) { // ignore first N sec after parachute ejection
-                core->prev_altitude_baro = core->altitude_baro;
-                break; 
-            }
-
             if (core->sensor_data.ut - core->ut_0 > DESCENT_MAX_TIME) { // check max descent time
                 core->state = STATE_SHUTDOWN;
                 core->trigger_shutdown = true;
                 break;
-            }
-
-            if (fabsf(core->altitude_baro - core->prev_altitude_baro) < 0.5f) {
-                core->descent_stable_count++;
-            } else {
-                core->descent_stable_count = 0;
             }
             break;
 

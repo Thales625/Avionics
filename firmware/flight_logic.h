@@ -48,7 +48,6 @@ typedef struct {
     float prev_altitude_baro;
     
     uint32_t parachute_ejection_count;
-    uint32_t descent_stable_count;
 
     bool trigger_parachute;
     bool trigger_shutdown;
