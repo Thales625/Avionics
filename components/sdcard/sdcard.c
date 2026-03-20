@@ -110,7 +110,7 @@ esp_err_t sdcard_read_file(const char *path) {
     return ESP_OK;
 }
 
-esp_err_t sdcard_write(const char *data, FILE *file_ptr) {
+esp_err_t sdcard_write_string(const char *data, FILE *file_ptr) {
     if (!file_ptr) return ESP_ERR_INVALID_ARG;
 
     int ret = fprintf(file_ptr, "%s", data);
@@ -118,12 +118,21 @@ esp_err_t sdcard_write(const char *data, FILE *file_ptr) {
 
     if (fflush(file_ptr) == 0) return ESP_OK;
     else return ESP_FAIL;
+}
+
+esp_err_t sdcard_write_struct(const void *data, size_t size, FILE *file_ptr) {
+    if (!file_ptr) return ESP_ERR_INVALID_ARG;
+
+    size_t written = fwrite(data, size, 1, file_ptr);
+    if (written != 1) return ESP_FAIL;
 
     return ESP_OK;
 }
 
 esp_err_t sdcard_sync(FILE *file_ptr) {
     if (!file_ptr) return ESP_ERR_INVALID_ARG;
+
+    if (fflush(file_ptr) != 0) return ESP_FAIL;
 
     int fd = fileno(file_ptr);
     if (fd < 0) return ESP_FAIL;
