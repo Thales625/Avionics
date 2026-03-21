@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "math_helper.h"
+
 #ifdef SIMULATION_BUILD
 typedef void (*sim_log_callback_t)(const char *msg);
 void flight_logic_set_sim_logger(sim_log_callback_t cb);
@@ -17,12 +19,6 @@ void sim_log_internal(const char *fmt, ...);
 #else
 #define SIM_LOG(fmt, ...) ((void)0)
 #endif
-
-typedef struct {
-    float x;
-    float y;
-    float z;
-} vector3f_t;
 
 typedef enum {
     STATE_PRE_FLIGHT,

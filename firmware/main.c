@@ -1,15 +1,14 @@
-#include "freertos/FreeRTOS.h"
+#include "freertos/FreeRTOS.h" // IWYU pragma: keep
 #include "freertos/task.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
-#include "driver/i2c.h"
 
 #include <math.h>
 #include <stdio.h>
-#include <inttypes.h>
 
+#include "math_helper.h"
 #include "sdcard.h"
 #include "mpu6050.h"
 #include "bmp280.h"
@@ -76,30 +75,7 @@ static void avionics_abort(int code) {
     }
 }
 
-static inline vector3f_t mpu_convert_accel(mpu6050_acceleration_t accel) {
-    return (vector3f_t) {
-        .x = accel.x,
-        .y = accel.y,
-        .z = accel.z
-    };
-}
-
-static inline vector3f_t mpu_convert_gyro(mpu6050_rotation_t rot) {
-    return (vector3f_t) {
-        .x = rot.x,
-        .y = rot.y,
-        .z = rot.z
-    };
-}
-
 static void avionics_task(void *arg) {
-    // sensor aux variables
-    mpu6050_acceleration_t mpu_acc = { 0 };
-    mpu6050_rotation_t mpu_gyro = { 0 };
-
-    float bmp_temperature = 0;
-    float bmp_pressure = 0;
-    
     // log file
     FILE *file_ptr;
 
@@ -137,7 +113,7 @@ static void avionics_task(void *arg) {
         flight_logic.sensor_data.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
         // MPU6050: read data
-        if (mpu6050_get_motion(&mpu_dev, &mpu_acc, &mpu_gyro) != ESP_OK) {
+        if (mpu6050_get_motion(&mpu_dev, &flight_logic.sensor_data.accel, &flight_logic.sensor_data.rot) != ESP_OK) {
             ESP_LOGW(TAG, "MPU6050: read failed");
 
             if (flight_logic.state == STATE_PRE_FLIGHT) {
@@ -151,23 +127,20 @@ static void avionics_task(void *arg) {
             flight_logic.sensor_data.rot.x = NAN;
             flight_logic.sensor_data.rot.y = NAN;
             flight_logic.sensor_data.rot.z = NAN;
-        } else {
-            flight_logic.sensor_data.accel = mpu_convert_accel(mpu_acc);
-            flight_logic.sensor_data.rot = mpu_convert_gyro(mpu_gyro);
         }
 
         // BMP280: read data
-        if (bmp280_read_float(&bmp_dev, &bmp_temperature, &bmp_pressure) != ESP_OK) {
+        if (bmp280_read_float(&bmp_dev, &flight_logic.sensor_data.temperature, &flight_logic.sensor_data.pressure) != ESP_OK) {
             ESP_LOGW(TAG, "BMP280: read failed");
 
             if (flight_logic.state == STATE_PRE_FLIGHT) {
                 avionics_abort(3);
             }
-        } else {
-            flight_logic.sensor_data.temperature = bmp_temperature;
-            flight_logic.sensor_data.pressure = bmp_pressure;
-        }
-        
+
+            flight_logic.sensor_data.temperature = NAN;
+            flight_logic.sensor_data.pressure = NAN;
+        }        
+
         // update flight logic
         flight_logic_update(&flight_logic);
 
