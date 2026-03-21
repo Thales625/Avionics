@@ -10,7 +10,10 @@ void flight_logic_set_sim_logger(sim_log_callback_t cb);
 
 void sim_log_internal(const char *fmt, ...);
 
+#ifndef CTYPESGEN
 #define SIM_LOG(fmt, ...) sim_log_internal(fmt, ##__VA_ARGS__)
+#endif
+
 #else
 #define SIM_LOG(fmt, ...) ((void)0)
 #endif
