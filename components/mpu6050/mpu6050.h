@@ -49,6 +49,8 @@
 #include <esp_err.h>
 #include <i2cdev.h>
 
+#include "math_helper.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -80,22 +82,28 @@ typedef struct
 /**
  * MPU6050 acceleration data, g
  */
-typedef struct
-{
-    float x; //!< acceleration axis x
-    float y; //!< acceleration axis y
-    float z; //!< acceleration axis z
-} mpu6050_acceleration_t;
+// typedef struct
+// {
+//     float x; //!< acceleration axis x
+//     float y; //!< acceleration axis y
+//     float z; //!< acceleration axis z
+// } mpu6050_acceleration_t;
+
+// #define mpu6050_acceleration_t vector3f_t;
+// #define mpu6050_rotation_t vector3f_t;
+
+typedef vector3f_t mpu6050_acceleration_t;
+typedef vector3f_t mpu6050_rotation_t;
 
 /**
  * MPU6050 rotation data, °/s
  */
-typedef struct
-{
-    float x; //!< rotation axis x
-    float y; //!< rotation axis y
-    float z; //!< rotation axis z
-} mpu6050_rotation_t;
+// typedef struct
+// {
+//     float x; //!< rotation axis x
+//     float y; //!< rotation axis y
+//     float z; //!< rotation axis z
+// } mpu6050_rotation_t;
 
 /**
  * Auxiliary I2C supply voltage levels
