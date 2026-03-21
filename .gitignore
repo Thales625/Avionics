@@ -1,6 +1,7 @@
 # data
 tools/Analysis/*.txt
 tools/Simulation/*.txt
+tools/Simulation/flight_logic_bindings.py
 
 # esp-idf
 build/
