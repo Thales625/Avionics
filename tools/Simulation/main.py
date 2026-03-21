@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 if __name__ == "__main__":
     # avionics
-    avionics = AvionicsSim(lib_path="./libavionics.so")
+    avionics = AvionicsSim()
 
     # simulation
     earth = CelestialBody(5.9723651e+24, 6371000)
