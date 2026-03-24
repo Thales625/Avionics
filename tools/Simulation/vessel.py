@@ -19,10 +19,12 @@ class Vessel:
         self.radius = 0.1
 
         # sensors
+        self.baro_noise = 0.9
         self.baro_delay = 275.0 * 1e-3
         self._baro = celestial_body.pressure(0)
         self._baro_t = 0.0
 
+        self.acc_noise = 0.2
         self.acc_delay = 1.0 * 1e-3
         self._acc = celestial_body.gravity(0)
         self._acc_t = 0.0
@@ -93,12 +95,12 @@ class Vessel:
     # sensors
     def baro(self, t):
         if t - self._baro_t >= self.baro_delay:
-            self._baro = self.celestial_body.pressure(self.altitude) + np.random.normal(0, 0.5)
+            self._baro = self.celestial_body.pressure(self.altitude) + np.random.normal(0, self.baro_noise)
             self._baro_t = t
         return self._baro
 
     def acc(self, t):
         if t - self._acc_t >= self.acc_delay:
-            self._acc = self._acceleration + np.random.normal(0, 0.1)
+            self._acc = self._acceleration + np.random.normal(0, self.acc_noise)
             self._acc_t = t
         return self._acc - self.celestial_body.gravity(0)
