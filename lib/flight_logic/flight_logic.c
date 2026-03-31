@@ -30,10 +30,10 @@ void sim_log_internal(const char *fmt, ...) {
 #endif
 
 void flight_logic_init(flight_logic_t *core) {
-    core->state = STATE_PRE_FLIGHT;
+    core->state.phase = PHASE_PRE_FLIGHT;
 
-    core->ut_0 = core->sensor_data.ut;
-    core->pressure_0 = core->sensor_data.pressure;
+    core->ut_0 = core->state.ut;
+    core->pressure_0 = core->state.pressure;
 
     core->altitude_baro = 0.0f;
     core->max_altitude_baro = 0.0f;
@@ -46,19 +46,19 @@ void flight_logic_init(flight_logic_t *core) {
 }
 
 void flight_logic_update(flight_logic_t *core) {
-    switch (core->state) {
-        case STATE_PRE_FLIGHT:
-			// if (fabs(core->sensor_data.accel.x) > 1.8f) core->state = STATE_ASCENT;
+    switch (core->state.phase) {
+        case PHASE_PRE_FLIGHT:
+			// if (fabs(core->state.accel.x) > 1.8f) core->state.phase = PHASE_ASCENT;
             
-            if (sqrtf(core->sensor_data.accel.x*core->sensor_data.accel.x + core->sensor_data.accel.y*core->sensor_data.accel.y + core->sensor_data.accel.z*core->sensor_data.accel.z) > 1.8f) core->state = STATE_ASCENT;
+            if (sqrtf(core->state.accel.x*core->state.accel.x + core->state.accel.y*core->state.accel.y + core->state.accel.z*core->state.accel.z) > 1.8f) core->state.phase = PHASE_ASCENT;
 
-            SIM_LOG("ACCEL: %f", core->sensor_data.accel.x);
+            SIM_LOG("ACCEL: %f", core->state.accel.x);
 
             break;
 
-        case STATE_ASCENT:
-			if (core->sensor_data.pressure > 0.0f) {
-                core->altitude_baro = 44330.f*(1.f - powf(core->sensor_data.pressure/core->pressure_0, .1903f));
+        case PHASE_ASCENT:
+			if (core->state.pressure > 0.0f) {
+                core->altitude_baro = 44330.f*(1.f - powf(core->state.pressure/core->pressure_0, .1903f));
 
 				if (core->altitude_baro > core->max_altitude_baro) {
 					core->max_altitude_baro = core->altitude_baro;
@@ -67,34 +67,34 @@ void flight_logic_update(flight_logic_t *core) {
 					core->parachute_ejection_count++;
 
 					if (core->parachute_ejection_count >= 5) { // EJECT
-						core->state = STATE_PARACHUTE_DEPLOY;
-						core->ut_0 = core->sensor_data.ut;
+						core->state.phase = PHASE_PARACHUTE_DEPLOY;
+						core->ut_0 = core->state.ut;
 					}
 				}
-                SIM_LOG("PRESSURE: %f", core->sensor_data.pressure);
+                SIM_LOG("PRESSURE: %f", core->state.pressure);
 			}
             break;
 
-        case STATE_PARACHUTE_DEPLOY:
+        case PHASE_PARACHUTE_DEPLOY:
 			core->trigger_parachute = true;
 
-            core->altitude_baro = 44330.f*(1.f - powf(core->sensor_data.pressure/core->pressure_0, .1903f));
-			core->ut_0 = core->sensor_data.ut;
+            core->altitude_baro = 44330.f*(1.f - powf(core->state.pressure/core->pressure_0, .1903f));
+			core->ut_0 = core->state.ut;
 
             SIM_LOG("PARACHUTE DEPLOY");
 
-            core->state = STATE_DESCENT;
+            core->state.phase = PHASE_DESCENT;
             break;
 
-        case STATE_DESCENT:
-            if (core->sensor_data.ut - core->ut_0 > DESCENT_MAX_TIME) { // check max descent time
-                core->state = STATE_SHUTDOWN;
+        case PHASE_DESCENT:
+            if (core->state.ut - core->ut_0 > DESCENT_MAX_TIME) { // check max descent time
+                core->state.phase = PHASE_SHUTDOWN;
                 core->trigger_shutdown = true;
                 break;
             }
             break;
 
-        case STATE_SHUTDOWN:
+        case PHASE_SHUTDOWN:
             core->trigger_shutdown = true;
             break;
     }
