@@ -1,15 +1,15 @@
-# data
+# esp-idf
+**/build/
+**/sdkconfig.old
+
+# tools
 tools/Analysis/*.txt
 tools/Simulation/*.txt
 tools/Simulation/flight_logic_bindings.py
 
-# esp-idf
-build/
-sdkconfig.old
-
-# project
-tools/*/__pycache__/
-.cache/
+# cache
+**/__pycache__/
+**/.cache/
 
 # Prerequisites
 *.d
