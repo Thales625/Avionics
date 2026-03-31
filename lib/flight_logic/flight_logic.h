@@ -21,23 +21,24 @@ void sim_log_internal(const char *fmt, ...);
 #endif
 
 typedef enum {
-    STATE_PRE_FLIGHT,
-    STATE_ASCENT,
-    STATE_PARACHUTE_DEPLOY,
-    STATE_DESCENT,
-    STATE_SHUTDOWN
+    PHASE_PRE_FLIGHT,
+    PHASE_ASCENT,
+    PHASE_PARACHUTE_DEPLOY,
+    PHASE_DESCENT,
+    PHASE_SHUTDOWN
+} flight_phase_t;
+
+typedef struct {
+    uint32_t ut;
+    flight_phase_t phase;
+    vector3f_t accel;
+    vector3f_t ang_vel;
+    float pressure;
+    float temperature;
 } flight_state_t;
 
 typedef struct {
     flight_state_t state;
-
-    struct {
-        uint32_t ut; // current time in ms
-        vector3f_t accel;
-        vector3f_t rot;
-        float pressure;
-        float temperature;
-    } sensor_data;
 
     uint32_t ut_0;
     float pressure_0;

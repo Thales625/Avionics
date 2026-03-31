@@ -1,4 +1,5 @@
 #include "freertos/FreeRTOS.h" // IWYU pragma: keep
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -6,14 +7,18 @@
 #include "driver/gpio.h"
 
 #include <math.h>
-#include <stdio.h>
 
 #include "math_helper.h"
-#include "sdcard.h"
 #include "mpu6050.h"
 #include "bmp280.h"
 
 #include "flight_logic.h"
+#include "telemetry.h"
+
+#define FLASH_PAGE_SIZE 256
+#define PACKETS_PER_PAGE (FLASH_PAGE_SIZE / sizeof(telemetry_packet_t))
+
+#define LORA_SAMPLING 10
 
 #define SDA_GPIO_PIN GPIO_NUM_21
 #define SCL_GPIO_PIN GPIO_NUM_22
@@ -23,15 +28,6 @@
 #define LED_PIN GPIO_NUM_33
 #define PBUTTON_PIN GPIO_NUM_4
 
-#define SD_CS_PIN GPIO_NUM_14
-#define SD_MISO_PIN GPIO_NUM_25
-#define SD_MOSI_PIN GPIO_NUM_27
-#define SD_SCLK_PIN GPIO_NUM_26
-
-#define SD_FILE "datalog.txt"
-#define SD_SYNC_INTERVAL 300 // ms
-#define SD_LOG_MAGIC 0xAABBCCDD
-
 static const char* TAG = "avionics";
 
 static flight_logic_t flight_logic;
@@ -39,19 +35,7 @@ static flight_logic_t flight_logic;
 static bmp280_t bmp_dev = { 0 };
 static mpu6050_dev_t mpu_dev = { 0 };
 
-static uint32_t sd_ut_sync;
-
-static struct {
-    uint32_t magic;
-    struct {
-        int state;
-        uint32_t ut;
-        float accel[3];
-        float gyro[3];
-        float pressure;
-        float temperature;
-    } data;
-} sd_log_packet = { SD_LOG_MAGIC, { 0 } };
+static QueueHandle_t telemetry_queue;
 
 static void beep(uint32_t duration) {
     gpio_set_level(BUZZER_PIN, 0);
@@ -76,20 +60,10 @@ static void avionics_abort(int code) {
 }
 
 static void avionics_task(void *arg) {
-    // log file
-    FILE *file_ptr;
-
     // startup delay + buzzer indication
     gpio_set_level(LED_PIN, 0);
     vTaskDelay(pdMS_TO_TICKS(8000));
     beep(500);
-
-    // SDCARD: open or create log file
-    if (sdcard_open_file(SD_FILE, "w", &file_ptr) != ESP_OK) {
-        sdcard_umount();
-        ESP_LOGE(TAG, "Failed to open/create file");
-        avionics_abort(2);
-    }
 
     // startup indication
     gpio_set_level(LED_PIN, 1);
@@ -97,9 +71,8 @@ static void avionics_task(void *arg) {
     beep(300);
 
     // init flight logic core
-    flight_logic.sensor_data.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
     flight_logic_init(&flight_logic);
-    sd_ut_sync = flight_logic.sensor_data.ut;
 
     // frequency
     TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -110,50 +83,39 @@ static void avionics_task(void *arg) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
 
         // update ut
-        flight_logic.sensor_data.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
         // MPU6050: read data
-        if (mpu6050_get_motion(&mpu_dev, &flight_logic.sensor_data.accel, &flight_logic.sensor_data.rot) != ESP_OK) {
+        if (mpu6050_get_motion(&mpu_dev, &flight_logic.state.accel, &flight_logic.state.ang_vel) != ESP_OK) {
             ESP_LOGW(TAG, "MPU6050: read failed");
 
-            if (flight_logic.state == STATE_PRE_FLIGHT) {
+            if (flight_logic.state.phase == PHASE_PRE_FLIGHT) {
                 avionics_abort(3);
             }
 
-            flight_logic.sensor_data.accel.x = NAN;
-            flight_logic.sensor_data.accel.y = NAN;
-            flight_logic.sensor_data.accel.z = NAN;
+            flight_logic.state.accel.x = NAN;
+            flight_logic.state.accel.y = NAN;
+            flight_logic.state.accel.z = NAN;
 
-            flight_logic.sensor_data.rot.x = NAN;
-            flight_logic.sensor_data.rot.y = NAN;
-            flight_logic.sensor_data.rot.z = NAN;
+            flight_logic.state.ang_vel.x = NAN;
+            flight_logic.state.ang_vel.y = NAN;
+            flight_logic.state.ang_vel.z = NAN;
         }
 
         // BMP280: read data
-        if (bmp280_read_float(&bmp_dev, &flight_logic.sensor_data.temperature, &flight_logic.sensor_data.pressure) != ESP_OK) {
+        if (bmp280_read_float(&bmp_dev, &flight_logic.state.temperature, &flight_logic.state.pressure) != ESP_OK) {
             ESP_LOGW(TAG, "BMP280: read failed");
 
-            if (flight_logic.state == STATE_PRE_FLIGHT) {
+            if (flight_logic.state.phase == PHASE_PRE_FLIGHT) {
                 avionics_abort(3);
             }
 
-            flight_logic.sensor_data.temperature = NAN;
-            flight_logic.sensor_data.pressure = NAN;
+            flight_logic.state.temperature = NAN;
+            flight_logic.state.pressure = NAN;
         }        
 
         // update flight logic
         flight_logic_update(&flight_logic);
-
-        // SDCARD: write
-        if (sdcard_write_struct(&sd_log_packet, sizeof(sd_log_packet), file_ptr) != ESP_OK) {
-            ESP_LOGE(TAG, "SD: write failed");
-        }
-
-        // SDCARD: sync
-        if (flight_logic.sensor_data.ut - sd_ut_sync > SD_SYNC_INTERVAL) {
-            if (sdcard_sync(file_ptr) != ESP_OK) ESP_LOGW(TAG, "SD: sync failed");
-            sd_ut_sync = flight_logic.sensor_data.ut;
-        }
 
         // set values
         gpio_set_level(PARACHUTE_PIN, flight_logic.trigger_parachute);
@@ -161,7 +123,52 @@ static void avionics_task(void *arg) {
     vTaskDelete(NULL);
 }
 
+static void telemetry_task(void *arg) {
+    telemetry_packet_t page_buffer[5]; // memory write buffer
+
+    telemetry_packet_t packet;
+    flight_state_t sample; // queue sample
+
+    int offset = 0;
+    int lora_counter = 0;
+
+    while (1) {
+        if (xQueueReceive(telemetry_queue, &sample, portMAX_DELAY)) {
+            // populate packet
+            packet.magic = TELEMETRY_MAGIC;
+
+            packet.ut = sample.ut;
+            packet.phase = (uint8_t) sample.phase;
+            packet.accel = sample.accel;
+            packet.ang_vel = sample.ang_vel;
+            packet.pressure = sample.pressure;
+            packet.temperature = sample.temperature;
+
+            packet.checksum = 10; // TODO
+
+            // send via LoRa
+            if (lora_counter++ > LORA_SAMPLING) {
+                lora_counter = 0;
+                // lora_send(packet);
+            }
+
+            // add to RAM buffer
+            page_buffer[offset++] = packet;
+
+            if (offset >= 6) {
+                // flash_write_page(buffer);
+                offset = 0;
+            }
+        }
+    }
+
+    vTaskDelete(NULL);
+}
+
 void app_main(void) {
+    // Create xQueue
+    telemetry_queue = xQueueCreate(32, sizeof(flight_state_t));
+
     // GPIO configuration
     {
         gpio_config_t in_conf = {
@@ -228,21 +235,12 @@ void app_main(void) {
         ESP_LOGI(TAG, "Found MPU6050");
     }
 
-    // SDCARD initialization
-    {
-        if (sdcard_init(SD_MOSI_PIN, SD_MISO_PIN, SD_SCLK_PIN, SD_CS_PIN) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to initialize SD card");
-
-            beep(5000);
-            avionics_abort(1);
-        }
-    }
-
     // set default values
     gpio_set_level(PARACHUTE_PIN, 0);
     gpio_set_level(LED_PIN, 1);
     gpio_set_level(BUZZER_PIN, 1);
 
-    // create avionics task
+    // create tasks
     xTaskCreate(avionics_task, "avionics_task", 4096, NULL, 10, NULL);
+    xTaskCreate(telemetry_task, "telemetry_task", 4096, NULL, 10, NULL);
 }
