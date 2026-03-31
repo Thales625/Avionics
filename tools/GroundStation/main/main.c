@@ -30,7 +30,7 @@ void app_main(void) {
         packet.checksum = 0;
 
         // sends the raw binary block via USB UART
-        uart_write_bytes(UART_NUM_0, (const char*)&packet, sizeof(telemetry_packet_t));
+        uart_write_bytes(UART_NUM_0, &packet, sizeof(telemetry_packet_t));
         
         vTaskDelay(pdMS_TO_TICKS(100)); 
     }
