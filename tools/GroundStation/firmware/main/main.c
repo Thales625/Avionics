@@ -10,6 +10,15 @@
 #include "flight_logic.h"
 
 void app_main(void) {
+    uart_config_t uart_config = {
+        .baud_rate = 115200,
+        .data_bits = UART_DATA_8_BITS,
+        .parity    = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    uart_param_config(UART_NUM_0, &uart_config);
     uart_driver_install(UART_NUM_0, 256, 0, 0, NULL, 0);
 
     telemetry_packet_t packet;
