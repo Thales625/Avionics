@@ -1,10 +1,16 @@
 import struct
 import threading
 import serial
+import serial.tools.list_ports
 
-class Telemetry:
-    def __init__(self, data_queue):
-        self.data_queue = data_queue
+from time import sleep
+from random import uniform
+
+class TelemetryLinkDebug:
+    def __init__(self, packet_queue, message_queue):
+        self.packet_queue = packet_queue
+        self.message_queue = message_queue
+
         self.serial_port = None
         self.is_running = False
         self.thread = None
@@ -12,6 +18,75 @@ class Telemetry:
         self.PACKET_FORMAT = "<IIB8fH"
         self.PACKET_SIZE = struct.calcsize(self.PACKET_FORMAT)
         self.MAGIC_BYTES = struct.pack("<I", 0xAABBCCDD)
+
+        # self.connect("debug")
+
+    @staticmethod
+    def get_available_ports():
+        return ["ttyUSB0", "ttyUSB1"]
+
+    def connect(self, port, baudrate=115200):
+        try:
+            self.is_running = True
+            self.thread = threading.Thread(target=self._loop, daemon=True)
+            self.thread.start()
+            return True, "Connected"
+        except Exception as e:
+            return False, f"Failed to connect: {e}"
+
+    def disconnect(self):
+        self.is_running = False
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+
+    def _loop(self):
+        dt = 0.2
+        t = 0
+        while self.is_running:
+            # read packet from esp32
+            sleep(dt)
+            t += dt
+            
+            packet = {
+                'ut': float(t)*1000,
+                'phase': int(1),
+                'accel_x': uniform(-1.0, 1.0),
+                'accel_y': uniform(-1.0, 1.0),
+                'accel_z': uniform(-1.0, 1.0),
+                'gyro_x': uniform(-3.0, 3.0),
+                'gyro_y': uniform(-3.0, 3.0),
+                'gyro_z': uniform(-3.0, 3.0),
+                'pressure': uniform(0, 1.2),
+                'temp': uniform(25.0, 30.0)
+            }
+            
+            self.packet_queue.put(packet)
+
+            # send message packet to esp32
+            while not self.message_queue.empty():
+                message = self.message_queue.get()
+                print(f"SENDING MESSAGE: {message}")
+
+class TelemetryLink:
+    """
+    TODO:
+        - _loop needs to convert messages to packet and send to the esp32
+    """
+    def __init__(self, packet_queue, message_queue):
+        self.packet_queue = packet_queue
+        self.message_queue = message_queue
+
+        self.is_running = False
+        self.serial_port = None
+        self.thread = None
+
+        self.PACKET_FORMAT = "<IIB8fH"
+        self.PACKET_SIZE = struct.calcsize(self.PACKET_FORMAT)
+        self.MAGIC_BYTES = struct.pack("<I", 0xAABBCCDD)
+
+    @staticmethod
+    def get_available_ports():
+        return [port.device for port in serial.tools.list_ports.comports() if port.vid is not None]
 
     def connect(self, port, baudrate=115200):
         try:
@@ -28,8 +103,9 @@ class Telemetry:
             self.serial_port.reset_input_buffer()
 
             self.is_running = True
-            self.thread = threading.Thread(target=self._read_loop, daemon=True)
+            self.thread = threading.Thread(target=self._loop, daemon=True)
             self.thread.start()
+
             return True, "Connected"
         except Exception as e:
             return False, f"Failed to connect: {e}"
@@ -39,7 +115,7 @@ class Telemetry:
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1.0)
 
-    def _read_loop(self):
+    def _loop(self):
         sync_buffer = b''
         
         while self.is_running and self.serial_port.is_open:
@@ -71,7 +147,7 @@ class Telemetry:
                                 'temp': unpacked_data[10]
                             }
                             
-                            self.data_queue.put(packet)
+                            self.packet_queue.put(packet)
 
                         sync_buffer = b''
             except Exception as e:
