@@ -6,6 +6,8 @@ import serial.tools.list_ports
 from time import sleep
 from random import uniform
 
+NO_SYNC_LIMIT = 5
+
 class TelemetryLinkDebug:
     def __init__(self, packet_queue, message_queue):
         self.packet_queue = packet_queue
@@ -18,8 +20,6 @@ class TelemetryLinkDebug:
         self.PACKET_FORMAT = "<IIB8fH"
         self.PACKET_SIZE = struct.calcsize(self.PACKET_FORMAT)
         self.MAGIC_BYTES = struct.pack("<I", 0xAABBCCDD)
-
-        # self.connect("debug")
 
     @staticmethod
     def get_available_ports():
@@ -85,6 +85,18 @@ class TelemetryLink:
         self.MAGIC_BYTES = struct.pack("<I", 0xAABBCCDD)
 
     @staticmethod
+    def crc16(data: bytes) -> int:
+        crc = 0xFFFF
+        for byte in data:
+            crc ^= (byte << 8)
+            for _ in range(8):
+                if crc & 0x8000:
+                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+                else:
+                    crc = (crc << 1) & 0xFFFF
+        return crc
+
+    @staticmethod
     def get_available_ports():
         return [port.device for port in serial.tools.list_ports.comports() if port.vid is not None]
 
@@ -117,6 +129,7 @@ class TelemetryLink:
 
     def _loop(self):
         sync_buffer = b''
+        no_sync_counter = 0
         
         while self.is_running and self.serial_port.is_open:
             try:
@@ -128,11 +141,15 @@ class TelemetryLink:
                     if len(sync_buffer) > 4: sync_buffer = sync_buffer[-4:]
                         
                     if sync_buffer == self.MAGIC_BYTES:
+                        no_sync_counter = 0
+
                         rest_of_packet = self.serial_port.read(self.PACKET_SIZE - 4)
                         
                         if len(rest_of_packet) == self.PACKET_SIZE - 4:
                             # unpack binary data into python variables
-                            unpacked_data = struct.unpack(self.PACKET_FORMAT, self.MAGIC_BYTES + rest_of_packet)
+                            full_packet = self.MAGIC_BYTES + rest_of_packet
+                            unpacked_data = struct.unpack(self.PACKET_FORMAT, full_packet)
+                            payload_bytes = full_packet[:-2]
                             
                             packet = {
                                 'ut': unpacked_data[1],
@@ -146,10 +163,23 @@ class TelemetryLink:
                                 'pressure': unpacked_data[9],
                                 'temp': unpacked_data[10]
                             }
-                            
-                            self.packet_queue.put(packet)
+
+                            # valid packet
+                            if unpacked_data[11]==self.crc16(payload_bytes):
+                                self.packet_queue.put(packet)
+                            else:
+                                print("CHECKSUM UNMATCH!")
 
                         sync_buffer = b''
+                    else:
+                        no_sync_counter += 1
+
+                        if no_sync_counter > self.PACKET_SIZE*NO_SYNC_LIMIT:
+                            no_sync_counter = 0
+                            pass
+                            # sync_buffer = b''
+                            # self.serial_port.reset_input_buffer()
+
             except Exception as e:
                 print(f"Error in serial reading: {e}")
                 break
