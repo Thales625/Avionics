@@ -3,10 +3,13 @@ from PyQt6.QtCore import Qt, QTimer
 
 import sys
 import queue
+from time import monotonic
 
 from telemetry_link import TelemetryLink, TelemetryLinkDebug
 from telemetry_store import TelemetryStore
 from conn_toolbar import ConnToolbar
+
+from widgets.base.manager import WidgetManager
 
 class MainWindow(QMainWindow):
     def __init__(self, title):
@@ -16,14 +19,14 @@ class MainWindow(QMainWindow):
         self.packet_queue = queue.Queue()
         self.message_queue = queue.Queue()
 
-        # self.telemetry_link = TelemetryLink(self.packet_queue, self.message_queue)
-        self.telemetry_link = TelemetryLinkDebug(self.packet_queue, self.message_queue)
+        self.telemetry_link = TelemetryLink(self.packet_queue, self.message_queue)
+        # self.telemetry_link = TelemetryLinkDebug(self.packet_queue, self.message_queue)
 
         # -- storage --
         self.store = TelemetryStore(100)
 
-        # --- widgets ----
-        self.widgets = []
+        # --- widget manager ----
+        self.widget_manager = WidgetManager()
         
         # --- timer ---
         self.timer = QTimer()
@@ -39,7 +42,7 @@ class MainWindow(QMainWindow):
         self.resize(1024, 768)
 
     def add_widget(self, widget):
-        self.widgets.append(widget)
+        self.widget_manager.register(widget)
 
         dock = QDockWidget(widget.title, self)
         dock.setWidget(widget)
@@ -51,8 +54,8 @@ class MainWindow(QMainWindow):
             packet = self.packet_queue.get()
             self.store.add(packet)
 
-        for widget in self.widgets:
-            widget.tick()
+        # update widgets
+        self.widget_manager.tick(monotonic() * 1000)
 
     def closeEvent(self, event):
         self.telemetry_link.disconnect()
