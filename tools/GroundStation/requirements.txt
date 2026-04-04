@@ -1,4 +1,5 @@
 colorama==0.4.6
+CppHeaderParser==2.7.4
 numpy==2.4.4
 PyQt6==6.11.0
 PyQt6-Qt6==6.11.0

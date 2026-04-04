@@ -18,12 +18,11 @@ if __name__ == "__main__":
             "Flight status",
             window.store,
             {
-                "phase": lambda x: f"Phase: {x}",
-                "ut": lambda ut: f"UT: {ut:.2f}",
-                "pressure": lambda press: f"Press: {press:.2f}"
+                "phase": lambda val: f"Phase: {val}",
+                "ut": lambda val: f"ut: {val/1000:.2f} s",
+                "pressure": lambda val: f"Press: {val:.0f} Pa"
             },
-            persistent=True,
-            interval=1000
+            interval=200
         )
     )
     
@@ -41,7 +40,7 @@ if __name__ == "__main__":
         GraphWidget(
             "Gyro",
             window.store,
-            "ut", ["gyro_x", "gyro_y", "gyro_z"]
+            "ut", ["ang_vel_x", "ang_vel_y", "ang_vel_z"]
         )
     )
 

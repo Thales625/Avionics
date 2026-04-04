@@ -4,66 +4,7 @@ import serial
 import serial.tools.list_ports
 from time import sleep
 
-from random import uniform
-
-class TelemetryLinkDebug:
-    def __init__(self, packet_queue, message_queue):
-        self.packet_queue = packet_queue
-        self.message_queue = message_queue
-
-        self.serial_port = None
-        self.is_running = False
-        self.thread = None
-
-        self.PACKET_FORMAT = "<IIB8fH"
-        self.PACKET_SIZE = struct.calcsize(self.PACKET_FORMAT)
-        self.MAGIC_BYTES = struct.pack("<I", 0xAABBCCDD)
-
-    @staticmethod
-    def get_available_ports():
-        return ["ttyUSB0", "ttyUSB1"]
-
-    def connect(self, port, baudrate=115200):
-        try:
-            self.is_running = True
-            self.thread = threading.Thread(target=self._loop, daemon=True)
-            self.thread.start()
-            return True, "Connected"
-        except Exception as e:
-            return False, f"Failed to connect: {e}"
-
-    def disconnect(self):
-        self.is_running = False
-        if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=1.0)
-
-    def _loop(self):
-        dt = 0.2
-        t = 0
-        while self.is_running:
-            # read packet from esp32
-            sleep(dt)
-            t += dt
-            
-            packet = {
-                'ut': float(t)*1000,
-                'phase': int(1),
-                'accel_x': uniform(-1.0, 1.0),
-                'accel_y': uniform(-1.0, 1.0),
-                'accel_z': uniform(-1.0, 1.0),
-                'gyro_x': uniform(-3.0, 3.0),
-                'gyro_y': uniform(-3.0, 3.0),
-                'gyro_z': uniform(-3.0, 3.0),
-                'pressure': uniform(0, 1.2),
-                'temp': uniform(25.0, 30.0)
-            }
-            
-            self.packet_queue.put(packet)
-
-            # send message packet to esp32
-            while not self.message_queue.empty():
-                message = self.message_queue.get()
-                print(f"SENDING MESSAGE: {message}")
+from telemetry_parser import parse_telemetry_header
 
 class TelemetryLink:
     """
@@ -78,9 +19,12 @@ class TelemetryLink:
         self.serial_port = None
         self.thread = None
 
-        self.PACKET_FORMAT = "<IIB8fH"
+        # get packet info
+        self.MAGIC_SIZE, self.MAGIC_BYTES, self.PACKET_FORMAT, self.PACKET_FIELDS = parse_telemetry_header("../../../lib/telemetry/telemetry.h")
+        if not self.PACKET_FORMAT: raise RuntimeError("Parser error")
+
+        # get packet size
         self.PACKET_SIZE = struct.calcsize(self.PACKET_FORMAT)
-        self.MAGIC_BYTES = struct.pack("<I", 0xAABBCCDD)
 
     @staticmethod
     def crc16(data: bytes) -> int:
@@ -148,38 +92,31 @@ class TelemetryLink:
         while self.is_running and self.serial_port.is_open:
             try:
                 byte = self.serial_port.read(1)
-
                 if not byte: continue
 
                 sync_buffer += byte
 
-                # limit sync_buffer to 4 bytes
-                if len(sync_buffer) > 4: sync_buffer = sync_buffer[-4:]
+                # limit sync_buffer to MAGIC size
+                if len(sync_buffer) > self.MAGIC_SIZE: sync_buffer = sync_buffer[-4:]
                     
                 if sync_buffer == self.MAGIC_BYTES:
-                    rest_of_packet = self.serial_port.read(self.PACKET_SIZE - 4)
-                    
-                    if len(rest_of_packet) == self.PACKET_SIZE - 4:
-                        # unpack binary data into python variables
+                    # read payload
+                    rest_of_packet = self.serial_port.read(self.PACKET_SIZE - self.MAGIC_SIZE)
+                    if len(rest_of_packet) == self.PACKET_SIZE - self.MAGIC_SIZE:
                         full_packet = self.MAGIC_BYTES + rest_of_packet
-                        unpacked_data = struct.unpack(self.PACKET_FORMAT, full_packet)
-                        payload_bytes = full_packet[:-2]
-                        
-                        packet = {
-                            'ut': unpacked_data[1],
-                            'phase': unpacked_data[2],
-                            'accel_x': unpacked_data[3],
-                            'accel_y': unpacked_data[4],
-                            'accel_z': unpacked_data[5],
-                            'gyro_x': unpacked_data[6],
-                            'gyro_y': unpacked_data[7],
-                            'gyro_z': unpacked_data[8],
-                            'pressure': unpacked_data[9],
-                            'temp': unpacked_data[10]
-                        }
 
-                        # valid packet
-                        if unpacked_data[11]==self.crc16(payload_bytes):
+                        # unpack binary packet
+                        unpacked_data = struct.unpack(self.PACKET_FORMAT, full_packet)
+
+                        # data to dict
+                        packet = dict(zip(self.PACKET_FIELDS, unpacked_data))
+
+                        # valid packet (without checksum field)
+                        if packet["checksum"]==self.crc16(full_packet[:-2]):
+                            # remove validation data
+                            del packet["magic"]
+                            del packet["checksum"]
+
                             self.packet_queue.put(packet)
                         else:
                             print("CHECKSUM UNMATCH!")

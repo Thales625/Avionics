@@ -5,7 +5,7 @@ import sys
 import queue
 from time import monotonic
 
-from telemetry_link import TelemetryLink, TelemetryLinkDebug
+from telemetry_link import TelemetryLink
 from telemetry_store import TelemetryStore
 from conn_toolbar import ConnToolbar
 
