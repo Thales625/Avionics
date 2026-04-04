@@ -1,5 +1,5 @@
-#ifndef __TELEMETRY_H__
-#define __TELEMETRY_H__
+#ifndef __TMTC_H__
+#define __TMTC_H__
 
 #include <inttypes.h> // IWYU pragma: keep
 
@@ -7,6 +7,7 @@
 
 #define TELEMETRY_MAGIC 0xAABBCCDD
 
+// downlink
 typedef struct __attribute__((packed)) {
     uint32_t magic;
 
@@ -19,5 +20,15 @@ typedef struct __attribute__((packed)) {
 
     uint16_t checksum;
 } telemetry_packet_t;
+
+// uplink
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+
+    uint8_t id;
+    uint32_t param;
+
+    uint16_t checksum;
+} telecommand_packet_t;
 
 #endif

@@ -56,7 +56,7 @@ def parse_telemetry_header(filepath):
         return None, None, None
 
 if __name__ == "__main__":
-    magic_size, magic_bytes, fmt, fields = parse_telemetry_header("../../../lib/telemetry/telemetry.h")
+    magic_size, magic_bytes, fmt, fields = parse_telemetry_header("../../../lib/tmtc/tmtc.h")
 
     print(magic_size)
     print(magic_bytes)

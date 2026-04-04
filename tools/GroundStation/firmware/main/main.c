@@ -6,7 +6,7 @@
 
 #include <unistd.h>
 
-#include "telemetry.h"
+#include "tmtc.h"
 #include "flight_logic.h"
 
 #define BAUD_RATE 115200 
@@ -44,10 +44,11 @@ void app_main(void) {
     uart_set_pin(PORT_USB, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 
     telemetry_packet_t packet;
-    packet.magic = TELEMETRY_MAGIC;
+    uint8_t recv_data;
 
     while (1) {
         // generate random data
+        packet.magic = TELEMETRY_MAGIC;
         packet.ut = (uint32_t)(esp_timer_get_time() / 1000);
         packet.phase = PHASE_ASCENT;
         packet.accel.x = (float)(esp_random() % 100) / 100.0f;
@@ -64,8 +65,10 @@ void app_main(void) {
 
         // sends the raw binary block via USB UART
         uart_write_bytes(PORT_USB, (const void*)&packet, sizeof(telemetry_packet_t));
+
+        // read data (ToDo)
+        // int len = uart_read_bytes(PORT_USB, &recv_data, 1, TIMEOUT_LOOP);
         
         vTaskDelay(pdMS_TO_TICKS(100)); 
     }
 }
-
