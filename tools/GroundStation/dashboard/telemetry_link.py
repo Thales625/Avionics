@@ -20,7 +20,7 @@ class TelemetryLink:
         self.thread = None
 
         # get packet info
-        self.MAGIC_SIZE, self.MAGIC_BYTES, self.PACKET_FORMAT, self.PACKET_FIELDS = parse_telemetry_header("../../../lib/telemetry/telemetry.h")
+        self.MAGIC_SIZE, self.MAGIC_BYTES, self.PACKET_FORMAT, self.PACKET_FIELDS = parse_telemetry_header("../../../lib/tmtc/tmtc.h")
         if not self.PACKET_FORMAT: raise RuntimeError("Parser error")
 
         # get packet size

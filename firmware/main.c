@@ -13,7 +13,7 @@
 #include "bmp280.h"
 
 #include "flight_logic.h"
-#include "telemetry.h"
+#include "tmtc.h"
 
 #define FLASH_PAGE_SIZE 256
 #define PACKETS_PER_PAGE (FLASH_PAGE_SIZE / sizeof(telemetry_packet_t))
