@@ -134,6 +134,7 @@ class TelemetryLink:
 
             return True, "Connected"
         except Exception as e:
+            self.is_running = False
             return False, f"Failed to connect: {e}"
 
     def disconnect(self):
