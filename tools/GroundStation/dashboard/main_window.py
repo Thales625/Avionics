@@ -34,8 +34,8 @@ class MainWindow(QMainWindow):
         self.timer.start(50) 
 
         # --- toolbar ---
-        self.toolbar = ConnToolbar(self.store, self.telemetry_link)
-        self.addToolBar(self.toolbar)
+        self.conn_toolbar = ConnToolbar(self.store, self.telemetry_link)
+        self.addToolBar(self.conn_toolbar)
         
         # -- window --
         self.setWindowTitle(title)
@@ -56,6 +56,9 @@ class MainWindow(QMainWindow):
 
         # update widgets
         self.widget_manager.tick(monotonic() * 1000)
+        
+        # update connection toolbar
+        self.conn_toolbar.tick()
 
     def closeEvent(self, event):
         self.telemetry_link.disconnect()
