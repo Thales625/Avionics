@@ -1,11 +1,12 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QVBoxLayout
 import pyqtgraph as pg
 
-class GraphWidget(QWidget):
-    def __init__(self, title, telemetry_store, x_signal, y_signals, width=2):
-        super().__init__()
+from .base.widget import Widget
 
-        self.title = title
+class GraphWidget(Widget):
+    def __init__(self, title, telemetry_store, x_signal, y_signals, width=2, **kwargs):
+        super().__init__(title, **kwargs)
+
         self.store = telemetry_store
 
         self.x_signal = x_signal
@@ -33,14 +34,14 @@ class GraphWidget(QWidget):
             self.curves[sig] = curve
     
     def tick(self):
-        x_arr = self.store.get(self.x_signal)
+        x_deque = self.store.get(self.x_signal)
+        if len(x_deque) == 0: return
 
-        if len(x_arr) == 0: return
+        x_data = list(x_deque)
 
         for sig, curve in self.curves.items():
-            data = self.store.get(sig)
+            y_deque = self.store.get(sig)
+            if len(y_deque) == 0: continue
 
-            if len(data) == 0: continue
-
-            n = min(len(x_arr), len(data))
-            curve.setData(list(x_arr)[-n:], list(data)[-n:])
+            n = min(len(x_deque), len(y_deque))
+            curve.setData(x_data[-n:], list(y_deque)[-n:])

@@ -1,11 +1,13 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt6.QtWidgets import QVBoxLayout, QLabel
 
-class StatusWidget(QWidget):
-    def __init__(self, title, telemetry_store, label_generators):
-        super().__init__()
+from .base.widget import Widget
 
-        self.title = title
+class StatusWidget(Widget):
+    def __init__(self, title, telemetry_store, label_generators, **kwargs):
+        super().__init__(title, **kwargs)
+
         self.store = telemetry_store
+
         self.labels = []
 
         layout = QVBoxLayout()
