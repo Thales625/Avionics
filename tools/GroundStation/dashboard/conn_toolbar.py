@@ -31,13 +31,13 @@ class ConnToolbar(QToolBar):
         
         ports = self.telemetry_link.get_available_ports()
 
-        if ports: # have available ports
+        if ports: # ports found
             self.combo_ports.addItems(ports)
             self.combo_ports.setEnabled(True)
             self.btn_connect.setEnabled(True)
             self.btn_connect.setText("Connect")
             self.btn_connect.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
-        else: # no available port
+        else: # no ports found
             self.combo_ports.setEnabled(False)
             self.btn_connect.setEnabled(False)
             self.btn_connect.setText("No ports")
