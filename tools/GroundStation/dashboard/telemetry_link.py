@@ -3,6 +3,7 @@ import threading
 import serial
 import serial.tools.list_ports
 from time import sleep
+from pathlib import Path
 
 from telemetry_parser import parse_telemetry_header
 
@@ -20,7 +21,9 @@ class TelemetryLink:
         self.thread = None
 
         # get packet info
-        self.MAGIC_SIZE, self.MAGIC_BYTES, self.PACKET_FORMAT, self.PACKET_FIELDS = parse_telemetry_header("../../../lib/tmtc/tmtc.h")
+        base_dir = Path(__file__).resolve().parent
+        header_path = (base_dir / "../../../lib/tmtc/tmtc.h").resolve()
+        self.MAGIC_SIZE, self.MAGIC_BYTES, self.PACKET_FORMAT, self.PACKET_FIELDS = parse_telemetry_header(header_path)
         if not self.PACKET_FORMAT: raise RuntimeError("Parser error")
 
         # get packet size
