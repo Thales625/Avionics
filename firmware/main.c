@@ -11,13 +11,27 @@
 #include "math_helper.h"
 #include "mpu6050.h"
 #include "bmp280.h"
+#include "lora.h"
 
 #include "flight_logic.h"
 #include "tmtc.h"
 
 #define FLASH_PAGE_SIZE 256
 #define PACKETS_PER_PAGE (FLASH_PAGE_SIZE / sizeof(telemetry_packet_t))
+#define BYTES_PER_PAGE (PACKETS_PER_PAGE * sizeof(telemetry_packet_t))
 
+#define GPS_TX GPIO_NUM_25
+#define GPS_RX GPIO_NUM_26
+#define GPS_UART UART_NUM_1
+
+#define LORA_TX GPIO_NUM_16
+#define LORA_RX GPIO_NUM_17
+#define LORA_M0 GPIO_NUM_4
+#define LORA_M1 GPIO_NUM_19
+#define LORA_AUX GPIO_NUM_34
+#define LORA_UART UART_NUM_2
+#define LORA_BAUD_RATE 9600
+#define LORA_CHANNEL 65
 #define LORA_SAMPLING 10
 
 #define SDA_GPIO_PIN GPIO_NUM_21
@@ -26,7 +40,6 @@
 #define PARACHUTE_PIN GPIO_NUM_18
 #define BUZZER_PIN GPIO_NUM_23
 #define LED_PIN GPIO_NUM_33
-#define PBUTTON_PIN GPIO_NUM_4
 
 static const char* TAG = "avionics";
 
@@ -34,6 +47,7 @@ static flight_logic_t flight_logic;
 
 static bmp280_t bmp_dev = { 0 };
 static mpu6050_dev_t mpu_dev = { 0 };
+static lora_dev_t lora_dev = { 0 };
 
 static QueueHandle_t telemetry_queue;
 
@@ -72,6 +86,14 @@ static void avionics_task(void *arg) {
 
     // init flight logic core
     flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    if (mpu6050_get_motion(&mpu_dev, &flight_logic.state.accel, &flight_logic.state.ang_vel) != ESP_OK) {
+        ESP_LOGW(TAG, "MPU6050: initial reading failed");
+        avionics_abort(3);
+    }
+    if (bmp280_read_float(&bmp_dev, &flight_logic.state.temperature, &flight_logic.state.pressure) != ESP_OK) {
+        ESP_LOGW(TAG, "BMP280: initial reading failed");
+        avionics_abort(3);
+    }
     flight_logic_init(&flight_logic);
 
     // frequency
@@ -119,12 +141,15 @@ static void avionics_task(void *arg) {
 
         // set values
         gpio_set_level(PARACHUTE_PIN, flight_logic.trigger_parachute);
+
+        // send data to telemetry
+        xQueueSend(telemetry_queue, &flight_logic.state, 0);
     }
     vTaskDelete(NULL);
 }
 
 static void telemetry_task(void *arg) {
-    telemetry_packet_t page_buffer[5]; // memory write buffer
+    telemetry_packet_t page_buffer[PACKETS_PER_PAGE]; // memory write buffer
 
     telemetry_packet_t packet;
     flight_state_t sample; // queue sample
@@ -144,19 +169,19 @@ static void telemetry_task(void *arg) {
             packet.pressure = sample.pressure;
             packet.temperature = sample.temperature;
 
-            packet.checksum = 10; // TODO
+            packet.checksum = crc16((const uint8_t*)&packet, sizeof(telemetry_packet_t) - sizeof(uint16_t));
 
             // send via LoRa
-            if (lora_counter++ > LORA_SAMPLING) {
+            if (lora_counter++ >= LORA_SAMPLING) {
                 lora_counter = 0;
-                // lora_send(packet);
+                lora_send(&lora_dev, &packet);
             }
 
-            // add to RAM buffer
+            // add to flash mem buffer
             page_buffer[offset++] = packet;
 
-            if (offset >= 6) {
-                // flash_write_page(buffer);
+            if (offset >= PACKETS_PER_PAGE) {
+                // flash_write_page(page_buffer, BYTES_PER_PAGE); TODO
                 offset = 0;
             }
         }
@@ -171,15 +196,6 @@ void app_main(void) {
 
     // GPIO configuration
     {
-        gpio_config_t in_conf = {
-            .pin_bit_mask = (1ULL << PBUTTON_PIN),
-            .mode = GPIO_MODE_INPUT,
-            .pull_up_en = GPIO_PULLUP_ENABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
-            .intr_type = GPIO_INTR_DISABLE
-        };
-        ESP_ERROR_CHECK(gpio_config(&in_conf));
-        
         gpio_config_t out_conf = {
             .pin_bit_mask = (1ULL << PARACHUTE_PIN) | 
                             (1ULL << LED_PIN) | 
@@ -196,6 +212,20 @@ void app_main(void) {
     {
         ESP_ERROR_CHECK(i2cdev_init());
         vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    // LoRa initialization
+    {
+        lora_dev.tx_pin = LORA_TX;
+        lora_dev.rx_pin = LORA_RX;
+        lora_dev.m0_pin = LORA_M0;
+        lora_dev.m1_pin = LORA_M1;
+        lora_dev.aux_pin = LORA_AUX;
+        lora_dev.uart_num = LORA_UART;
+        lora_dev.baud_rate = LORA_BAUD_RATE;
+        lora_dev.channel = LORA_CHANNEL;
+        ESP_ERROR_CHECK(lora_init(&lora_dev));
+        ESP_LOGI(TAG, "LoRa initialized on UART %d", lora_dev.uart_num);
     }
 
     // BMP280 initialization
@@ -241,6 +271,9 @@ void app_main(void) {
     gpio_set_level(BUZZER_PIN, 1);
 
     // create tasks
-    xTaskCreate(avionics_task, "avionics_task", 4096, NULL, 10, NULL);
-    xTaskCreate(telemetry_task, "telemetry_task", 4096, NULL, 10, NULL);
+    // xTaskCreate(avionics_task, "avionics_task", 4096, NULL, 10, NULL);
+    // xTaskCreate(telemetry_task, "telemetry_task", 4096, NULL, 5, NULL);
+
+    xTaskCreatePinnedToCore(avionics_task, "avionics_task", 4096, NULL, 10, NULL, 1); // APP_CPU
+    xTaskCreatePinnedToCore(telemetry_task, "telemetry_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
 }

@@ -2,6 +2,7 @@
 #define __TMTC_H__
 
 #include <inttypes.h> // IWYU pragma: keep
+#include <unistd.h>
 
 #include "math_helper.h"
 
@@ -30,5 +31,8 @@ typedef struct __attribute__((packed)) {
 
     uint16_t checksum;
 } telecommand_packet_t;
+
+// CRC-16-CCITT
+uint16_t crc16(const uint8_t *data, size_t length);
 
 #endif

@@ -12,23 +12,6 @@
 #define BAUD_RATE 115200 
 #define PORT_USB UART_NUM_0
 
-// CRC-16-CCITT
-static uint16_t crc16(const uint8_t *data, size_t length) {
-    uint16_t crc = 0xFFFF;
-    
-    for (size_t i = 0; i < length; i++) {
-        crc ^= (uint16_t)(data[i] << 8);
-        for (uint8_t j = 0; j < 8; j++) {
-            if (crc & 0x8000) {
-                crc = (crc << 1) ^ 0x1021;
-            } else {
-                crc <<= 1;
-            }
-        }
-    }
-    return crc;
-}
-
 void app_main(void) {
     uart_config_t uart_config = {
         .baud_rate = BAUD_RATE,
