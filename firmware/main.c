@@ -4,6 +4,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 #include "driver/gpio.h"
 
 #include <math.h>
@@ -31,7 +32,6 @@
 #define LORA_AUX GPIO_NUM_34
 #define LORA_UART UART_NUM_2
 #define LORA_BAUD_RATE 9600
-#define LORA_CHANNEL 65
 #define LORA_SAMPLING 10
 
 #define SDA_GPIO_PIN GPIO_NUM_21
@@ -148,6 +148,46 @@ static void avionics_task(void *arg) {
     vTaskDelete(NULL);
 }
 
+static void fake_avionics_task(void *arg) {
+    // init flight logic core
+    flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    flight_logic.state.pressure = 1000;
+    flight_logic_init(&flight_logic);
+
+    flight_logic.state.phase = PHASE_ASCENT;
+
+    // frequency
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xFrequency = pdMS_TO_TICKS(10); // 10 ms
+
+    // main loop
+    while (1) {
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
+
+        // update ut
+        flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
+
+        // MPU6050: fake data
+        flight_logic.state.accel.x = (float)(esp_random() % 100) / 100.0f;
+        flight_logic.state.accel.y = (float)(esp_random() % 100) / 100.0f;
+        flight_logic.state.accel.z = 9.81f + ((float)(esp_random() % 100) / 100.0f);
+        flight_logic.state.ang_vel.x = (float)(esp_random() % 100) / 100.0f;
+        flight_logic.state.ang_vel.y = (float)(esp_random() % 100) / 100.0f;
+        flight_logic.state.ang_vel.z = (float)(esp_random() % 100) / 100.0f;
+
+        // BMP280: fake data
+        flight_logic.state.pressure = 101325.0f - (esp_random() % 5000);
+        flight_logic.state.temperature = 25.0f;
+
+        // update flight logic
+        //flight_logic_update(&flight_logic);
+
+        // send data to telemetry
+        xQueueSend(telemetry_queue, &flight_logic.state, 0);
+    }
+    vTaskDelete(NULL);
+}
+
 static void telemetry_task(void *arg) {
     telemetry_packet_t page_buffer[PACKETS_PER_PAGE]; // memory write buffer
 
@@ -174,7 +214,7 @@ static void telemetry_task(void *arg) {
             // send via LoRa
             if (lora_counter++ >= LORA_SAMPLING) {
                 lora_counter = 0;
-                lora_send(&lora_dev, &packet);
+                lora_send_bytes(&lora_dev, (uint8_t *)&packet, sizeof(packet));
             }
 
             // add to flash mem buffer
@@ -194,6 +234,25 @@ void app_main(void) {
     // Create xQueue
     telemetry_queue = xQueueCreate(32, sizeof(flight_state_t));
 
+    // LoRa initialization
+    {
+        lora_dev.tx_pin = LORA_RX;
+        lora_dev.rx_pin = LORA_TX;
+        lora_dev.m0_pin = LORA_M0;
+        lora_dev.m1_pin = LORA_M1;
+        lora_dev.aux_pin = LORA_AUX;
+        lora_dev.uart_num = LORA_UART;
+        lora_dev.baud_rate = LORA_BAUD_RATE;
+        lora_dev.channel = TMTC_CHANNEL;
+        ESP_ERROR_CHECK(lora_init(&lora_dev));
+        ESP_LOGI(TAG, "LoRa initialized on UART %d", lora_dev.uart_num);
+    }
+
+    // DEBUG
+    xTaskCreatePinnedToCore(fake_avionics_task, "fake_avionics_task", 4096, NULL, 10, NULL, 1); // APP_CPU
+    xTaskCreatePinnedToCore(telemetry_task, "telemetry_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
+    return;
+
     // GPIO configuration
     {
         gpio_config_t out_conf = {
@@ -212,20 +271,6 @@ void app_main(void) {
     {
         ESP_ERROR_CHECK(i2cdev_init());
         vTaskDelay(pdMS_TO_TICKS(100));
-    }
-
-    // LoRa initialization
-    {
-        lora_dev.tx_pin = LORA_TX;
-        lora_dev.rx_pin = LORA_RX;
-        lora_dev.m0_pin = LORA_M0;
-        lora_dev.m1_pin = LORA_M1;
-        lora_dev.aux_pin = LORA_AUX;
-        lora_dev.uart_num = LORA_UART;
-        lora_dev.baud_rate = LORA_BAUD_RATE;
-        lora_dev.channel = LORA_CHANNEL;
-        ESP_ERROR_CHECK(lora_init(&lora_dev));
-        ESP_LOGI(TAG, "LoRa initialized on UART %d", lora_dev.uart_num);
     }
 
     // BMP280 initialization
@@ -271,9 +316,6 @@ void app_main(void) {
     gpio_set_level(BUZZER_PIN, 1);
 
     // create tasks
-    // xTaskCreate(avionics_task, "avionics_task", 4096, NULL, 10, NULL);
-    // xTaskCreate(telemetry_task, "telemetry_task", 4096, NULL, 5, NULL);
-
     xTaskCreatePinnedToCore(avionics_task, "avionics_task", 4096, NULL, 10, NULL, 1); // APP_CPU
     xTaskCreatePinnedToCore(telemetry_task, "telemetry_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
 }
