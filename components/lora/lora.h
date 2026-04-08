@@ -3,8 +3,6 @@
 
 #include "driver/uart.h" // IWYU pragma: keep
 
-#include "tmtc.h"
-
 typedef struct {
     int tx_pin;
     int rx_pin;
@@ -17,6 +15,9 @@ typedef struct {
 } lora_dev_t;
 
 esp_err_t lora_init(lora_dev_t *dev);
-void lora_send(lora_dev_t *dev, telemetry_packet_t *packet);
+esp_err_t lora_set_rssi(lora_dev_t *dev, bool enable);
+
+void lora_send_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size);
+int lora_receive_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size);
 
 #endif 
