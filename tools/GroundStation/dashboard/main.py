@@ -16,13 +16,16 @@ if __name__ == "__main__":
     window.add_widget(
         StatusWidget(
             "Flight status",
+            window.telemetry_link,
             window.store,
             {
+                "rssi": lambda val: f"RSSI: {val} dBm",
+                "ut": lambda val: f"ut: {val:.1f} s",
                 "phase": lambda val: f"Phase: {val}",
-                "ut": lambda val: f"ut: {val/1000:.2f} s",
-                "pressure": lambda val: f"Press: {val:.0f} Pa"
+                "pressure": lambda val: f"Press: {val:.0f} Pa",
+                "temperature": lambda val: f"Temp: {val:.0f} °C"
             },
-            interval=200
+            # interval=0.2 # 200ms
         )
     )
     

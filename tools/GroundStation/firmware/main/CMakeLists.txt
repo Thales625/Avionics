@@ -1,5 +1,5 @@
 idf_component_register(
     SRCS "main.c"
     INCLUDE_DIRS "."
-    REQUIRES esp_driver_uart esp_timer math_helper flight_logic tmtc
+    REQUIRES esp_driver_uart driver esp_timer tmtc lora
 )
