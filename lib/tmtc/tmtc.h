@@ -7,6 +7,9 @@
 #include "math_helper.h"
 
 #define TELEMETRY_MAGIC 0xAABBCCDD
+#define TELECOMMAND_MAGIC 0xDDCCBBAA
+
+#define TMTC_CHANNEL 65
 
 // downlink
 typedef struct __attribute__((packed)) {
