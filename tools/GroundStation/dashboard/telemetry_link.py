@@ -2,7 +2,7 @@ import struct
 import threading
 import serial
 import serial.tools.list_ports
-from time import sleep
+from time import sleep, monotonic
 from pathlib import Path
 
 from telemetry_parser import parse_telemetry_header
@@ -12,13 +12,18 @@ class TelemetryLink:
     TODO:
         - _loop needs to convert messages to packet and send to the esp32
     """
-    def __init__(self, packet_queue, message_queue):
-        self.packet_queue = packet_queue
-        self.message_queue = message_queue
+    def __init__(self, telemetry_queue, telecommand_queue):
+        self.telemetry_queue = telemetry_queue
+        self.telecommand_queue = telecommand_queue
 
         self.is_running = False
         self.serial_port = None
         self.thread = None
+
+        self.wdt_last_packet = monotonic()
+        self.WDT_TIMEOUT = 2.0
+
+        self.HAS_RSSI = True
 
         # get packet info
         base_dir = Path(__file__).resolve().parent
@@ -97,16 +102,19 @@ class TelemetryLink:
                 byte = self.serial_port.read(1)
                 if not byte: continue
 
+                # print(byte)
+
                 sync_buffer += byte
 
                 # limit sync_buffer to MAGIC size
-                if len(sync_buffer) > self.MAGIC_SIZE: sync_buffer = sync_buffer[-4:]
+                if len(sync_buffer) > self.MAGIC_SIZE: sync_buffer = sync_buffer[-self.MAGIC_SIZE:]
                     
                 if sync_buffer == self.MAGIC_BYTES:
                     # read payload
-                    rest_of_packet = self.serial_port.read(self.PACKET_SIZE - self.MAGIC_SIZE)
-                    if len(rest_of_packet) == self.PACKET_SIZE - self.MAGIC_SIZE:
-                        full_packet = self.MAGIC_BYTES + rest_of_packet
+                    data_len = self.PACKET_SIZE - self.MAGIC_SIZE + (1 if self.HAS_RSSI else 0)
+                    rest_of_packet = self.serial_port.read(data_len)
+                    if len(rest_of_packet) == data_len:
+                        full_packet = self.MAGIC_BYTES + (rest_of_packet[:-1] if self.HAS_RSSI else rest_of_packet)
 
                         # unpack binary packet
                         unpacked_data = struct.unpack(self.PACKET_FORMAT, full_packet)
@@ -114,13 +122,21 @@ class TelemetryLink:
                         # data to dict
                         packet = dict(zip(self.PACKET_FIELDS, unpacked_data))
 
-                        # valid packet (without checksum field)
+                        # valid packet
                         if packet["checksum"]==self.crc16(full_packet[:-2]):
                             # remove validation data
                             del packet["magic"]
                             del packet["checksum"]
 
-                            self.packet_queue.put(packet)
+                            if self.HAS_RSSI:
+                                packet["rssi"] = -rest_of_packet[-1]
+
+                            # update WDT
+                            self.wdt_last_packet = monotonic()
+
+                            packet["ut"] /= 1000 # ms to s
+
+                            self.telemetry_queue.put(packet)
                         else:
                             print("CHECKSUM UNMATCH!")
 

@@ -16,11 +16,10 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         # --- telemetry link ---
-        self.packet_queue = queue.Queue()
-        self.message_queue = queue.Queue()
+        self.telemetry_queue = queue.Queue()
+        self.telecommand_queue = queue.Queue()
 
-        self.telemetry_link = TelemetryLink(self.packet_queue, self.message_queue)
-        # self.telemetry_link = TelemetryLinkDebug(self.packet_queue, self.message_queue)
+        self.telemetry_link = TelemetryLink(self.telemetry_queue, self.telecommand_queue)
 
         # -- storage --
         self.store = TelemetryStore(100)
@@ -50,12 +49,12 @@ class MainWindow(QMainWindow):
 
     def update_ui(self):
         # store packets
-        while not self.packet_queue.empty():
-            packet = self.packet_queue.get()
+        while not self.telemetry_queue.empty():
+            packet = self.telemetry_queue.get()
             self.store.add(packet)
 
         # update widgets
-        self.widget_manager.tick(monotonic() * 1000)
+        self.widget_manager.tick(monotonic())
         
         # update connection toolbar
         self.conn_toolbar.tick()
