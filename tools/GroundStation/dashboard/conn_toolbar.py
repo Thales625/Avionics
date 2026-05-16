@@ -1,5 +1,7 @@
 from PyQt6.QtWidgets import QToolBar, QLabel, QComboBox, QPushButton, QMessageBox
 
+from logger import Logger
+
 class ConnToolbar(QToolBar):
     def __init__(self, telemetry_store, telemetry_link, title="Serial Connection"):
         super().__init__(title)
@@ -28,7 +30,7 @@ class ConnToolbar(QToolBar):
     def refresh_ports(self):
         self.btn_refresh.setEnabled(True)
         self.combo_ports.clear()
-        
+
         ports = self.telemetry_link.get_available_ports()
 
         if ports: # ports found
@@ -47,7 +49,7 @@ class ConnToolbar(QToolBar):
         if not self.telemetry_link.is_running:
             selected_port = self.combo_ports.currentText()
             success, msg = self.telemetry_link.connect(selected_port)
-            
+
             if success:
                 self.btn_connect.setText("Disconnect")
                 self.btn_connect.setStyleSheet("background-color: #c62828; color: white; font-weight: bold;")
@@ -66,5 +68,5 @@ class ConnToolbar(QToolBar):
         if self.btn_connect.text() == "Disconnect" and not self.telemetry_link.is_running:
             self.telemetry_link.disconnect()
             self.refresh_ports()
-            print("[Warning] USB connection was lost.")
+            Logger.warning("USB connection was lost.")
             QMessageBox.critical(self, "Disconnect", "USB connection was lost.")

@@ -5,6 +5,8 @@ import serial.tools.list_ports
 from time import sleep, monotonic
 from pathlib import Path
 
+from logger import Logger
+
 from telemetry_parser import parse_telemetry_header
 
 class TelemetryLink:
@@ -17,19 +19,22 @@ class TelemetryLink:
         self.telecommand_queue = telecommand_queue
 
         self.is_running = False
-        self.serial_port = None
-        self.thread = None
+        self.serial_port = serial.Serial()
+        self.thread: threading.Thread | None = None
 
         self.wdt_last_packet = monotonic()
         self.WDT_TIMEOUT = 2.0
 
-        self.HAS_RSSI = True
+        self.HAS_RSSI = False
 
         # get packet info
         base_dir = Path(__file__).resolve().parent
         header_path = (base_dir / "../../../lib/tmtc/tmtc.h").resolve()
-        self.MAGIC_SIZE, self.MAGIC_BYTES, self.PACKET_FORMAT, self.PACKET_FIELDS = parse_telemetry_header(header_path)
-        if not self.PACKET_FORMAT: raise RuntimeError("Parser error")
+        try:
+            self.MAGIC_SIZE, self.MAGIC_BYTES, self.PACKET_FORMAT, self.PACKET_FIELDS = parse_telemetry_header(header_path)
+        except Exception as e:
+            Logger.error(f"<Parser> Fatal Error processing header: {e}")
+            exit()
 
         # get packet size
         self.PACKET_SIZE = struct.calcsize(self.PACKET_FORMAT)
@@ -52,7 +57,6 @@ class TelemetryLink:
 
     def connect(self, port, baudrate=115200):
         try:
-            self.serial_port = serial.Serial()
             self.serial_port.port = port
             self.serial_port.baudrate = baudrate
             self.serial_port.timeout = 0.5
@@ -86,29 +90,31 @@ class TelemetryLink:
 
             return True, "Connected"
         except Exception as e:
-            self.is_running = False
+            self.disconnect()
             return False, f"Failed to connect: {e}"
 
     def disconnect(self):
         self.is_running = False
+
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1.0)
 
+        if self.serial_port and self.serial_port.is_open:
+            self.serial_port.close()
+
     def _loop(self):
         sync_buffer = b''
-        
+
         while self.is_running and self.serial_port.is_open:
             try:
                 byte = self.serial_port.read(1)
                 if not byte: continue
 
-                # print(byte)
-
                 sync_buffer += byte
 
                 # limit sync_buffer to MAGIC size
                 if len(sync_buffer) > self.MAGIC_SIZE: sync_buffer = sync_buffer[-self.MAGIC_SIZE:]
-                    
+
                 if sync_buffer == self.MAGIC_BYTES:
                     # read payload
                     data_len = self.PACKET_SIZE - self.MAGIC_SIZE + (1 if self.HAS_RSSI else 0)
@@ -129,7 +135,7 @@ class TelemetryLink:
                             del packet["checksum"]
 
                             if self.HAS_RSSI:
-                                packet["rssi"] = -rest_of_packet[-1]
+                                packet["rssi"] = rest_of_packet[-1] - 256
 
                             # update WDT
                             self.wdt_last_packet = monotonic()
@@ -138,14 +144,14 @@ class TelemetryLink:
 
                             self.telemetry_queue.put(packet)
                         else:
-                            print("CHECKSUM UNMATCH!")
+                            Logger.warning("CHECKSUM UNMATCH!")
 
                     sync_buffer = b''
 
             except Exception as e:
-                print(f"Error in serial reading: {e}")
+                Logger.error(f"serial reading failed: {e}")
                 break
 
         self.is_running = False
-        if self.serial_port and self.serial_port.is_open: 
+        if self.serial_port and self.serial_port.is_open:
             self.serial_port.close()

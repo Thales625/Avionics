@@ -47,6 +47,15 @@ if __name__ == "__main__":
         )
     )
 
+    # gps graph
+    window.add_widget(
+        GraphWidget(
+            "GPS",
+            window.store,
+            "lat_nmea", "lon_nmea"
+        )
+    )
+
     # display window
     window.show()
 

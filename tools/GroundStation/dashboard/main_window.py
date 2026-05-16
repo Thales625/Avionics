@@ -26,16 +26,16 @@ class MainWindow(QMainWindow):
 
         # --- widget manager ----
         self.widget_manager = WidgetManager()
-        
+
         # --- timer ---
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_ui)
-        self.timer.start(50) 
+        self.timer.start(50)
 
         # --- toolbar ---
         self.conn_toolbar = ConnToolbar(self.store, self.telemetry_link)
         self.addToolBar(self.conn_toolbar)
-        
+
         # -- window --
         self.setWindowTitle(title)
         self.resize(1024, 768)
@@ -55,15 +55,15 @@ class MainWindow(QMainWindow):
 
         # update widgets
         self.widget_manager.tick(monotonic())
-        
+
         # update connection toolbar
         self.conn_toolbar.tick()
 
-    def closeEvent(self, event):
+    def closeEvent(self, a0):
         self.telemetry_link.disconnect()
-        event.accept()
+        if a0 is not None: a0.accept()
 
 def init():
     app = QApplication(sys.argv)
-    app.setStyle("Fusion") 
+    app.setStyle("Fusion")
     return app
