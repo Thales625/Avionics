@@ -21,6 +21,8 @@ typedef struct __attribute__((packed)) {
     vector3f_t ang_vel;
     float pressure;
     float temperature;
+    int32_t lat_nmea, lon_nmea;
+    uint8_t satellites;
 
     uint16_t checksum;
 } telemetry_packet_t;

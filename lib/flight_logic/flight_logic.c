@@ -3,6 +3,7 @@
 #include <math.h>
 
 #define DESCENT_MAX_TIME 30000 // ms
+#define EJECTION_TIME 5000 // ms
 
 #ifdef SIMULATION_BUILD
 #include <stddef.h>
@@ -36,50 +37,60 @@ void flight_logic_init(flight_logic_t *core) {
     core->pressure_0 = core->state.pressure;
 
     core->altitude_baro = 0.0f;
-    core->max_altitude_baro = 0.0f;
-    core->prev_altitude_baro = 0.0f;
-    
-    core->parachute_ejection_count = 0;
 
     core->trigger_parachute = false;
     core->trigger_shutdown = false;
 }
 
 void flight_logic_update(flight_logic_t *core) {
+    static float prev_pressure = NAN;
+    static float max_altitude_baro = -999.9f;
+    static uint32_t parachute_ejection_count = 0;
+    static uint32_t descent_time = 0;
+
+    // update altitude
+    core->altitude_baro = 44330.f*(1.f - powf(core->state.pressure/core->pressure_0, .1903f));
+
     switch (core->state.phase) {
+        case PHASE_WAITING:
+            if (core->should_arm)
+                core->state.phase = PHASE_PRE_FLIGHT;
+            break;
+
         case PHASE_PRE_FLIGHT:
-			// if (fabs(core->state.accel.x) > 1.8f) core->state.phase = PHASE_ASCENT;
-            
-            if (sqrtf(core->state.accel.x*core->state.accel.x + core->state.accel.y*core->state.accel.y + core->state.accel.z*core->state.accel.z) > 1.8f) core->state.phase = PHASE_ASCENT;
-
+            if (sqrtf(core->state.accel.x*core->state.accel.x + core->state.accel.y*core->state.accel.y + core->state.accel.z*core->state.accel.z) > 1.8f) {
+                core->state.phase = PHASE_ASCENT;
+                core->pressure_0 = core->state.pressure;
+            }
             SIM_LOG("ACCEL: %f", core->state.accel.x);
-
             break;
 
         case PHASE_ASCENT:
-			if (core->state.pressure > 0.0f) {
-                core->altitude_baro = 44330.f*(1.f - powf(core->state.pressure/core->pressure_0, .1903f));
+            // minimum altitude check
+            if (core->altitude_baro < 5.0f) return;
 
-				if (core->altitude_baro > core->max_altitude_baro) {
-					core->max_altitude_baro = core->altitude_baro;
-					core->parachute_ejection_count = 0; // reset count
-				} else if (core->max_altitude_baro - core->altitude_baro >= 1.0f) {
-					core->parachute_ejection_count++;
+            // sensor update check
+            if (core->state.pressure == prev_pressure) return;
+            prev_pressure = core->state.pressure;
 
-					if (core->parachute_ejection_count >= 5) { // EJECT
-						core->state.phase = PHASE_PARACHUTE_DEPLOY;
-						core->ut_0 = core->state.ut;
-					}
-				}
-                SIM_LOG("PRESSURE: %f", core->state.pressure);
-			}
+            if (core->altitude_baro > max_altitude_baro) {
+                max_altitude_baro = core->altitude_baro;
+                parachute_ejection_count = 0; // reset count
+            } else if (max_altitude_baro - core->altitude_baro >= 1.0f) {
+                parachute_ejection_count++;
+
+                if (parachute_ejection_count >= 5) { // EJECT
+                    core->state.phase = PHASE_PARACHUTE_DEPLOY;
+                    core->ut_0 = core->state.ut;
+                }
+            }
+            SIM_LOG("PRESSURE: %f", core->state.pressure);
             break;
 
         case PHASE_PARACHUTE_DEPLOY:
-			core->trigger_parachute = true;
+            core->trigger_parachute = true;
 
-            core->altitude_baro = 44330.f*(1.f - powf(core->state.pressure/core->pressure_0, .1903f));
-			core->ut_0 = core->state.ut;
+            core->ut_0 = core->state.ut;
 
             SIM_LOG("PARACHUTE DEPLOY");
 
@@ -87,14 +98,18 @@ void flight_logic_update(flight_logic_t *core) {
             break;
 
         case PHASE_DESCENT:
-            if (core->state.ut - core->ut_0 > DESCENT_MAX_TIME) { // check max descent time
+            descent_time = core->state.ut - core->ut_0;
+
+            if (descent_time > EJECTION_TIME) { // check ejection time
+                core->trigger_parachute = false;
+            }
+            if (descent_time > DESCENT_MAX_TIME) { // check max descent time
                 core->state.phase = PHASE_SHUTDOWN;
-                core->trigger_shutdown = true;
-                break;
             }
             break;
 
         case PHASE_SHUTDOWN:
+            core->trigger_parachute = false;
             core->trigger_shutdown = true;
             break;
     }

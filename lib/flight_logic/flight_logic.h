@@ -21,6 +21,7 @@ void sim_log_internal(const char *fmt, ...);
 #endif
 
 typedef enum {
+    PHASE_WAITING,
     PHASE_PRE_FLIGHT,
     PHASE_ASCENT,
     PHASE_PARACHUTE_DEPLOY,
@@ -35,6 +36,8 @@ typedef struct {
     vector3f_t ang_vel;
     float pressure;
     float temperature;
+    int32_t lat_nmea, lon_nmea;
+    uint8_t satellites;
 } flight_state_t;
 
 typedef struct {
@@ -44,13 +47,11 @@ typedef struct {
     float pressure_0;
 
     float altitude_baro;
-    float max_altitude_baro;
-    float prev_altitude_baro;
-    
-    uint32_t parachute_ejection_count;
 
     bool trigger_parachute;
     bool trigger_shutdown;
+
+    bool should_arm;
 } flight_logic_t;
 
 void flight_logic_init(flight_logic_t *core);
