@@ -4,7 +4,9 @@
 #include "lora.h"
 
 static inline void lora_wait_aux(lora_dev_t *dev) {
-    while (gpio_get_level(dev->aux_pin) == 0);
+    while (gpio_get_level(dev->aux_pin) == 0) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 }
 
 esp_err_t lora_init(lora_dev_t *dev) {
@@ -27,6 +29,37 @@ esp_err_t lora_init(lora_dev_t *dev) {
     gpio_set_direction(dev->m0_pin, GPIO_MODE_OUTPUT);
     gpio_set_direction(dev->m1_pin, GPIO_MODE_OUTPUT);
     gpio_set_direction(dev->aux_pin, GPIO_MODE_INPUT);
+
+    // normal mode
+    gpio_set_level(dev->m0_pin, 0);
+    gpio_set_level(dev->m1_pin, 0);
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+    lora_wait_aux(dev);
+
+    return ESP_OK;
+}
+
+esp_err_t lora_set_channel(lora_dev_t *dev, uint8_t channel) {
+    if (dev == NULL) return ESP_ERR_INVALID_ARG;
+
+    // config mode
+    gpio_set_level(dev->m0_pin, 1);
+    gpio_set_level(dev->m1_pin, 1);
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+    lora_wait_aux(dev);
+
+    // clear uart buffer
+    uart_flush_input(dev->uart_num);
+
+    // channel reg (0x04)
+    uint8_t write_cmd[4] = {0xC0, 0x04, 0x01, channel};
+    uart_write_bytes(dev->uart_num, (const uint8_t *)write_cmd, 4);
+    uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+    lora_wait_aux(dev);
 
     // normal mode
     gpio_set_level(dev->m0_pin, 0);
@@ -97,6 +130,67 @@ esp_err_t lora_set_rssi(lora_dev_t *dev, bool enable) {
     return ESP_OK;
 }
 
+esp_err_t lora_set_power(lora_dev_t *dev, lora_power_t power) {
+    if (dev == NULL) return ESP_ERR_INVALID_ARG;
+
+    // config mode
+    gpio_set_level(dev->m0_pin, 1);
+    gpio_set_level(dev->m1_pin, 1);
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+    lora_wait_aux(dev);
+
+    // clear uart buffer
+    uart_flush_input(dev->uart_num);
+
+    // read REG0 command
+    uint8_t read_cmd[3] = {0xC1, 0x03, 0x01};
+    uart_write_bytes(dev->uart_num, (const uint8_t *)read_cmd, 3);
+    uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+    lora_wait_aux(dev);
+
+    // read response
+    uint8_t response[4] = {0};
+
+    int len = uart_read_bytes(dev->uart_num, response, 4, pdMS_TO_TICKS(500));
+
+    if (len != 4 || response[0] != 0xC1 || response[1] != 0x03) {
+        // communication failed: back to normal mode
+        gpio_set_level(dev->m0_pin, 0);
+        gpio_set_level(dev->m1_pin, 0);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        lora_wait_aux(dev);
+        return ESP_FAIL;
+    }
+
+    uint8_t reg1_val = response[3];
+
+    // clear power bits [1:0]
+    reg1_val &= 0xFC;
+
+    // set new power
+    reg1_val |= (power & 0x03);
+
+    // write REG1 (0x03)
+    uint8_t write_cmd[4] = {0xC0, 0x03, 0x01, reg1_val};
+    uart_write_bytes(dev->uart_num, (const uint8_t *)write_cmd, 4);
+    uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+    lora_wait_aux(dev);
+
+    // normal mode
+    gpio_set_level(dev->m0_pin, 0);
+    gpio_set_level(dev->m1_pin, 0);
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+    lora_wait_aux(dev);
+
+    return ESP_OK;
+}
+
 
 void lora_send_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size) {
     if (dev == NULL) return;
@@ -109,7 +203,7 @@ void lora_send_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size) {
 
 int lora_receive_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size) {
     if (dev == NULL) return -1;
-    
+
     size_t available_bytes = 0;
     ESP_ERROR_CHECK(uart_get_buffered_data_len(dev->uart_num, &available_bytes));
 
