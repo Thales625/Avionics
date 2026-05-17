@@ -3,7 +3,16 @@
 #include <math.h>
 
 #define DESCENT_MAX_TIME 30000 // ms
-#define EJECTION_TIME 5000 // ms
+#define EJECTION_MAX_TIME 2000 // ms
+
+#define EJECTION_MIN_ALTITUDE 10.0f
+#define EJECTION_ALTITUDE_THRESHOLD 0.5f
+#define EJECTION_CONFIRMATION_COUNT 5
+
+#define LAUNCH_CONFIRMATION_COUNT 3
+#define LAUNCH_ACC_THRESHOLD 2.0f
+
+#define _acc_threshold2 (LAUNCH_ACC_THRESHOLD*LAUNCH_ACC_THRESHOLD)
 
 #ifdef SIMULATION_BUILD
 #include <stddef.h>
@@ -28,79 +37,101 @@ void sim_log_internal(const char *fmt, ...) {
 
     sim_log_cb(buffer);
 }
+#else
+#include "esp_log.h"
+static const char* TAG = "flight_logic";
 #endif
 
 void flight_logic_init(flight_logic_t *core) {
     core->state.phase = PHASE_PRE_FLIGHT;
 
-    core->ut_0 = core->state.ut;
     core->pressure_0 = core->state.pressure;
 
     core->altitude_baro = 0.0f;
 
     core->trigger_parachute = false;
     core->trigger_shutdown = false;
+
+    core->should_arm = false;
 }
 
 void flight_logic_update(flight_logic_t *core) {
-    static float prev_pressure = NAN;
+    static float prev_pressure = 0.0f;
     static float max_altitude_baro = -999.9f;
-    static uint32_t parachute_ejection_count = 0;
+    static uint32_t liftoff_count = 0;
+    static uint32_t parachute_EJECTION_CONFIRMATION_COUNT = 0;
     static uint32_t descent_time = 0;
+    static uint32_t ut_0 = 0;
 
-    // update altitude
-    core->altitude_baro = 44330.f*(1.f - powf(core->state.pressure/core->pressure_0, .1903f));
+    SIM_LOG("|ACCEL|: %f", sqrtf(core->state.accel.x*core->state.accel.x + core->state.accel.y*core->state.accel.y + core->state.accel.z*core->state.accel.z));
+
+    bool baro_updated = core->state.pressure != prev_pressure;
+    if (baro_updated) {
+        prev_pressure = core->state.pressure;
+    }
+
+    if (core->state.phase < PHASE_ASCENT) {
+        // sensor update check
+        if (baro_updated) {
+            core->pressure_0 = (0.05f*core->state.pressure) + (0.95f*core->pressure_0);
+        }
+    }
+
+    // update altitude (QFE)
+    if (baro_updated) {
+        core->altitude_baro = 44330.f*(1.f - powf(core->state.pressure/core->pressure_0, .1903f));
+    }
 
     switch (core->state.phase) {
         case PHASE_WAITING:
-            if (core->should_arm)
+            if (core->should_arm) {
                 core->state.phase = PHASE_PRE_FLIGHT;
+            }
             break;
 
         case PHASE_PRE_FLIGHT:
-            if (sqrtf(core->state.accel.x*core->state.accel.x + core->state.accel.y*core->state.accel.y + core->state.accel.z*core->state.accel.z) > 1.8f) {
-                core->state.phase = PHASE_ASCENT;
-                core->pressure_0 = core->state.pressure;
+            if (core->state.accel.x*core->state.accel.x + core->state.accel.y*core->state.accel.y + core->state.accel.z*core->state.accel.z > _acc_threshold2) {
+                liftoff_count++;
+                if (liftoff_count >= LAUNCH_CONFIRMATION_COUNT) {
+                    core->state.phase = PHASE_ASCENT;
+                }
+            } else {
+                liftoff_count = 0;
             }
-            SIM_LOG("ACCEL: %f", core->state.accel.x);
+
+            ESP_LOGI(TAG, "ascent_count: %d", liftoff_count);
             break;
 
         case PHASE_ASCENT:
             // minimum altitude check
-            if (core->altitude_baro < 5.0f) return;
+            if (core->altitude_baro < EJECTION_MIN_ALTITUDE) break;
 
             // sensor update check
-            if (core->state.pressure == prev_pressure) return;
-            prev_pressure = core->state.pressure;
+            if (!baro_updated) break;
 
             if (core->altitude_baro > max_altitude_baro) {
                 max_altitude_baro = core->altitude_baro;
-                parachute_ejection_count = 0; // reset count
-            } else if (max_altitude_baro - core->altitude_baro >= 1.0f) {
-                parachute_ejection_count++;
+                parachute_EJECTION_CONFIRMATION_COUNT = 0; // reset count
+            } else if (max_altitude_baro - core->altitude_baro >= EJECTION_ALTITUDE_THRESHOLD) {
+                parachute_EJECTION_CONFIRMATION_COUNT++;
 
-                if (parachute_ejection_count >= 5) { // EJECT
+                if (parachute_EJECTION_CONFIRMATION_COUNT >= EJECTION_CONFIRMATION_COUNT) { // EJECT
                     core->state.phase = PHASE_PARACHUTE_DEPLOY;
-                    core->ut_0 = core->state.ut;
                 }
             }
-            SIM_LOG("PRESSURE: %f", core->state.pressure);
             break;
 
         case PHASE_PARACHUTE_DEPLOY:
             core->trigger_parachute = true;
-
-            core->ut_0 = core->state.ut;
-
-            SIM_LOG("PARACHUTE DEPLOY");
-
+            ut_0 = core->state.ut;
             core->state.phase = PHASE_DESCENT;
+            SIM_LOG("PARACHUTE DEPLOY");
             break;
 
         case PHASE_DESCENT:
-            descent_time = core->state.ut - core->ut_0;
+            descent_time = core->state.ut - ut_0;
 
-            if (descent_time > EJECTION_TIME) { // check ejection time
+            if (descent_time > EJECTION_MAX_TIME) { // check ejection time
                 core->trigger_parachute = false;
             }
             if (descent_time > DESCENT_MAX_TIME) { // check max descent time

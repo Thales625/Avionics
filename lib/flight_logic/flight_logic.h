@@ -1,24 +1,29 @@
 #ifndef __FLIGHT_LOGIC_H__
 #define __FLIGHT_LOGIC_H__
 
-#include <stdint.h>
+#ifndef SIMULATION_BUILD
+
 #include <stdbool.h>
+#include <stdint.h>
 
-#include "math_helper.h"
-
-#ifdef SIMULATION_BUILD
+#define SIM_LOG(...) ((void)0)
+#else
 typedef void (*sim_log_callback_t)(const char *msg);
 void flight_logic_set_sim_logger(sim_log_callback_t cb);
-
 void sim_log_internal(const char *fmt, ...);
+
+typedef unsigned int uint32_t;
+typedef signed int int32_t;
+typedef unsigned char uint8_t;
+typedef signed char int8_t;
 
 #ifndef CTYPESGEN
 #define SIM_LOG(fmt, ...) sim_log_internal(fmt, ##__VA_ARGS__)
 #endif
 
-#else
-#define SIM_LOG(fmt, ...) ((void)0)
 #endif
+
+#include "math_helper.h"
 
 typedef enum {
     PHASE_WAITING,
@@ -43,7 +48,6 @@ typedef struct {
 typedef struct {
     flight_state_t state;
 
-    uint32_t ut_0;
     float pressure_0;
 
     float altitude_baro;
