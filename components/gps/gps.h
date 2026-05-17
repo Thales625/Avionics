@@ -10,6 +10,7 @@
 
 typedef struct {
     uart_port_t uart_num;
+    uint8_t uart_buffer[128];
 } gps_dev_t;
 
 esp_err_t gps_init_desc(gps_dev_t *dev, gpio_num_t tx, gpio_num_t rx, uart_port_t uart_num);

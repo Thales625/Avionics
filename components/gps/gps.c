@@ -117,17 +117,15 @@ esp_err_t gps_init_desc(gps_dev_t *dev, gpio_num_t tx, gpio_num_t rx, uart_port_
 }
 
 esp_err_t gps_update(gps_dev_t *dev) {
-    uint8_t data[128];
     int len;
-    // int len = uart_read_bytes(dev->uart_num, data, sizeof(data) - 1, pdMS_TO_TICKS(10));
 
     while (1) {
-        len = uart_read_bytes(dev->uart_num, data, sizeof(data), 0);
+        len = uart_read_bytes(dev->uart_num, dev->uart_buffer, sizeof(dev->uart_buffer), 0);
 
         if (len <= 0) break;
 
         for (int i = 0; i < len; i++) {
-            uint8_t byte = data[i];
+            uint8_t byte = dev->uart_buffer[i];
 
             if (byte == '\r') {
                 continue; // ignore
