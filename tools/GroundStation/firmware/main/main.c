@@ -69,6 +69,6 @@ void app_main(void) {
         // read data (ToDo)
         // int len = uart_read_bytes(PORT_USB, &recv_data, 1, TIMEOUT_LOOP);
 
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }

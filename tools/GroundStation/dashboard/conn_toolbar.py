@@ -15,6 +15,7 @@ class ConnToolbar(QToolBar):
         # --- elements ---
         self.addWidget(QLabel("Port"))
         self.combo_ports = QComboBox()
+        self.combo_ports.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.addWidget(self.combo_ports)
 
         self.btn_refresh = QPushButton("Refresh")

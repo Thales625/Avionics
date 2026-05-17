@@ -25,7 +25,7 @@ class TelemetryLink:
         self.wdt_last_packet = monotonic()
         self.WDT_TIMEOUT = 2.0
 
-        self.HAS_RSSI = False
+        self.HAS_RSSI = True
 
         # get packet info
         base_dir = Path(__file__).resolve().parent
@@ -33,7 +33,7 @@ class TelemetryLink:
         try:
             self.MAGIC_SIZE, self.MAGIC_BYTES, self.PACKET_FORMAT, self.PACKET_FIELDS = parse_telemetry_header(header_path)
         except Exception as e:
-            Logger.error(f"<Parser> Fatal Error processing header: {e}")
+            Logger.error(f"<Parser> Fatal error processing header: {e}")
             exit()
 
         # get packet size

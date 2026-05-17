@@ -18,7 +18,7 @@ class StatusWidget(Widget):
             lbl = QLabel()
             lbl.setStyleSheet("""
                 QLabel {
-                    font-size: 16px; 
+                    font-size: 16px;
                     font-weight: bold;
                     color: white;
                     background: transparent;
@@ -27,7 +27,7 @@ class StatusWidget(Widget):
 
             # default value
             try:
-                lbl.setText(formatter_func(0)) 
+                lbl.setText(formatter_func(0))
             except Exception:
                 lbl.setText(f"{signal_key}: --")
 

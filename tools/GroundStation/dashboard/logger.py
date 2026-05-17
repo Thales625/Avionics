@@ -4,10 +4,10 @@ import time
 from enum import Enum
 
 class LogLevel(Enum):
-    INFO = ("INFO", "\033[32m")   # green
-    WARN = ("WARN", "\033[93m")   # yellow
-    ERROR = ("ERROR", "\033[31m") # red
-    DEBUG = ("DEBUG", "\033[90m") # gray
+    INFO = ("", "\033[32m")   # green
+    WARN = ("W", "\033[93m")  # yellow
+    ERROR = ("E", "\033[31m") # red
+    DEBUG = ("D", "\033[90m") # gray
 
     @property
     def label(self) -> str:
@@ -41,8 +41,8 @@ class Logger:
 
         print(
             f"{level.color}"
+            f"{level.label} "
             f"[{timestamp}] "
-            f"[{level.label}] "
             f"{text}"
             f"{Logger.RESET}"
         )
