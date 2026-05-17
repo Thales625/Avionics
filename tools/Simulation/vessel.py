@@ -19,8 +19,8 @@ class Vessel:
         self.radius = 0.1
 
         # sensors
-        self.baro_noise = 0.9
-        self.baro_delay = 275.0 * 1e-3
+        self.baro_noise = 2.0
+        self.baro_delay = 20.0 * 1e-3
         self._baro = celestial_body.pressure(0)
         self._baro_t = 0.0
 

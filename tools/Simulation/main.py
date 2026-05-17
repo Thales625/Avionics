@@ -20,8 +20,8 @@ if __name__ == "__main__":
     # init avionics
     avionics.set_sensors(
         ut=0, # ms
-        ax=0, ay=0, az=0, 
-        rx=0, ry=0, rz=0, 
+        ax=0, ay=0, az=0,
+        rx=0, ry=0, rz=0,
         press=earth.pressure(0), temp=25.0
     )
     avionics.init()
@@ -34,14 +34,14 @@ if __name__ == "__main__":
 
     time_arr = []
     altitude_arr = []
-    state_arr = []
+    phase_arr = []
 
     meas_acc_arr = []
     meas_pressure_arr = []
 
     dt = 10 * 1e-3
     t = 0.
-    while t < 8:
+    while t < 10:
         vessel.update(dt, t)
 
         baro_sensor = vessel.baro(t)
@@ -49,16 +49,16 @@ if __name__ == "__main__":
 
         avionics.set_sensors(
             ut=t*1000, # ms
-            ax=acc_sensor, ay=0, az=0, 
-            rx=0, ry=0, rz=0, 
+            ax=acc_sensor, ay=0, az=0,
+            rx=0, ry=0, rz=0,
             press=baro_sensor, temp=25.0
         )
-        avionics.update()
+        avionics.update(t)
 
         time_arr.append(t)
 
         altitude_arr.append(avionics.altitude)
-        state_arr.append(avionics.state)
+        phase_arr.append(avionics.phase)
 
         meas_pressure_arr.append(baro_sensor)
         meas_acc_arr.append(acc_sensor)
@@ -96,7 +96,7 @@ if __name__ == "__main__":
     axs[3].legend(loc="upper right")
     axs[3].grid()
 
-    axs[4].step(time_arr, state_arr, label="State", color="red", where="post")
+    axs[4].step(time_arr, phase_arr, label="Phase", color="red", where="post")
     axs[4].set_ylabel("State")
     axs[4].legend(loc="upper right")
     axs[4].grid()

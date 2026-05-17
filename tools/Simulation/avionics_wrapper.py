@@ -11,11 +11,17 @@ class AvionicsSim:
         self._cb = _lib.sim_log_callback_t(logger)
         _lib.flight_logic_set_sim_logger(self._cb)
 
+        # time
+        self.delay = 40. * 1e-3
+        self._last_t = 0.0
+
     def init(self):
         _lib.flight_logic_init(ctypes.byref(self._core))
 
-    def update(self):
-        _lib.flight_logic_update(ctypes.byref(self._core))
+    def update(self, t):
+        if t - self._last_t >= self.delay:
+            _lib.flight_logic_update(ctypes.byref(self._core))
+            self._last_t = t
 
     def set_sensors(self, ut, ax, ay, az, rx, ry, rz, press, temp):
         self._core.state.ut = int(ut)
@@ -30,7 +36,7 @@ class AvionicsSim:
 
     # getters
     @property
-    def state(self): return self._core.state
+    def phase(self): return self._core.state.phase
 
     @property
     def altitude(self): return self._core.altitude_baro
