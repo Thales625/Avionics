@@ -5,7 +5,7 @@
 
 static inline void lora_wait_aux(lora_dev_t *dev) {
     while (gpio_get_level(dev->aux_pin) == 0) {
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
 
@@ -21,10 +21,18 @@ esp_err_t lora_init(lora_dev_t *dev) {
         .source_clk = UART_SCLK_APB,
     };
 
+    esp_err_t err;
+
     // buffer RX = 256 bytes | buffer TX = 512 bytes
-    ESP_ERROR_CHECK(uart_driver_install(dev->uart_num, 256, 512, 0, NULL, 0));
-    ESP_ERROR_CHECK(uart_param_config(dev->uart_num, &uart_config));
-    ESP_ERROR_CHECK(uart_set_pin(dev->uart_num, dev->tx_pin, dev->rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    // ESP_ERROR_CHECK(uart_driver_install(dev->uart_num, 256, 512, 0, NULL, 0));
+
+    // buffer RX = 256 bytes | buffer TX = 0 bytes
+    err = uart_driver_install(dev->uart_num, 256, 0, 0, NULL, 0);
+    if (err != ESP_OK) return err;
+    err = uart_param_config(dev->uart_num, &uart_config);
+    if (err != ESP_OK) return err;
+    err = uart_set_pin(dev->uart_num, dev->tx_pin, dev->rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    if (err != ESP_OK) return err;
 
     gpio_set_direction(dev->m0_pin, GPIO_MODE_OUTPUT);
     gpio_set_direction(dev->m1_pin, GPIO_MODE_OUTPUT);
@@ -196,7 +204,10 @@ void lora_send_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size) {
     if (dev == NULL) return;
 
     // LoRa is busy
-    if (gpio_get_level(dev->aux_pin) == 0) return;
+    // if (gpio_get_level(dev->aux_pin) == 0) return;
+
+    // wait for LoRa to be ready
+    lora_wait_aux(dev);
 
     uart_write_bytes(dev->uart_num, (const uint8_t *)bytes, size);
 }
