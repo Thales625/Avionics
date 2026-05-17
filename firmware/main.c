@@ -96,30 +96,25 @@ static void avionics_abort(int code) {
 }
 
 static void avionics_task(void *arg) {
-    // startup indication
-    gpio_set_level(LED_PIN, 1);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    gpio_set_level(LED_PIN, 0);
-
     // init flight logic core
     flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
-    if (mpu6050_get_motion(&mpu_dev, &flight_logic.state.accel, &flight_logic.state.ang_vel) != ESP_OK) {
-        ESP_LOGW(TAG, "MPU6050: initial reading failed");
-        avionics_abort(3);
-    }
     if (bmp280_read_float(&bmp_dev, &flight_logic.state.temperature, &flight_logic.state.pressure) != ESP_OK) {
         ESP_LOGW(TAG, "BMP280: initial reading failed");
-        avionics_abort(3);
+        avionics_abort(6);
+    }
+    if (mpu6050_get_motion(&mpu_dev, &flight_logic.state.accel, &flight_logic.state.ang_vel) != ESP_OK) {
+        ESP_LOGW(TAG, "MPU6050: initial reading failed");
+        avionics_abort(7);
     }
     flight_logic_init(&flight_logic);
 
     // frequency
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xFrequency = pdMS_TO_TICKS(100); // ms
+    TickType_t last_tick = xTaskGetTickCount();
+    const TickType_t interval = pdMS_TO_TICKS(40); // 40 ms = 25 Hz
 
     // main loop
     while (1) {
-        vTaskDelayUntil(&xLastWakeTime, xFrequency);
+        vTaskDelayUntil(&last_tick, interval);
 
         // update ut
         flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
@@ -163,20 +158,25 @@ static void avionics_task(void *arg) {
         gpio_set_level(PARACHUTE_PIN, flight_logic.trigger_parachute);
 
         // log values
-        ESP_LOGI(TAG, "phase: %d, altitude: %.2f, pressure: %.2f, |accel|: %.2f, sats: %d, lat: %d, lon: %d", flight_logic.state.phase, flight_logic.altitude_baro, flight_logic.state.pressure, sqrtf(flight_logic.state.accel.x*flight_logic.state.accel.x + flight_logic.state.accel.y*flight_logic.state.accel.y + flight_logic.state.accel.z*flight_logic.state.accel.z), flight_logic.state.satellites, flight_logic.state.lat_nmea, flight_logic.state.lon_nmea);
+        // ESP_LOGI(TAG, "phase: %d, altitude: %.6f, pressure: %.2f, |accel|: %.2f, sats: %d, lat: %d, lon: %d", flight_logic.state.phase, flight_logic.altitude_baro, flight_logic.state.pressure, sqrtf(flight_logic.state.accel.x*flight_logic.state.accel.x + flight_logic.state.accel.y*flight_logic.state.accel.y + flight_logic.state.accel.z*flight_logic.state.accel.z), flight_logic.state.satellites, flight_logic.state.lat_nmea, flight_logic.state.lon_nmea);
 
         // send data to telemetry
-        xQueueSend(telemetry_queue, &flight_logic.state, 0);
+        if (xQueueSend(telemetry_queue, &flight_logic.state, 0) != pdTRUE) {
+            ESP_LOGW(TAG, "Skip sample: queue is full!");
+        } else {
+            UBaseType_t items_in_queue = uxQueueMessagesWaiting(telemetry_queue);
+            ESP_LOGI(TAG, "samples in queue: %d", items_in_queue);
+        }
     }
     vTaskDelete(NULL);
 }
 
 static void telemetry_task(void *arg) {
     // flash memory
-    // telemetry_packet_t page_buffer[PACKETS_PER_PAGE]; // write buffer
-    // uint32_t offset = 0;
-    // uint32_t current_flash_addr = 0;
-    // int32_t last_erased_sector = -1;
+    telemetry_packet_t page_buffer[PACKETS_PER_PAGE]; // write buffer
+    uint32_t offset = 0;
+    uint32_t current_flash_addr = 0;
+    int32_t last_erased_sector = -1;
 
     // LoRa
     telemetry_packet_t packet;
@@ -204,10 +204,15 @@ static void telemetry_task(void *arg) {
             if (lora_counter++ >= LORA_SAMPLING) {
                 lora_counter = 0;
                 lora_send_bytes(&lora_dev, (uint8_t *)&packet, sizeof(packet));
+
+                if (gpio_get_level(lora_dev.aux_pin) == 1) {
+                    lora_send_bytes(&lora_dev, (uint8_t *)&packet, sizeof(packet));
+                } else {
+                    ESP_LOGW(TAG, "Skip LoRa send: LoRa is busy!");
+                }
             }
 
             // add to flash mem buffer
-            /*
             page_buffer[offset++] = packet;
 
             if (offset >= PACKETS_PER_PAGE) {
@@ -234,7 +239,6 @@ static void telemetry_task(void *arg) {
                 current_flash_addr += BYTES_PER_PAGE;
                 offset = 0;
             }
-            */
         }
     }
 
@@ -408,8 +412,8 @@ void app_main(void) {
             ESP_LOGE(TAG, "LoRa failed to init");
             avionics_abort(4);
         }
-        lora_set_power(&lora_dev, LORA_POWER_17_DBM);
-        // lora_set_power(&lora_dev, LORA_POWER_13_DBM);
+        // lora_set_power(&lora_dev, LORA_POWER_17_DBM);
+        lora_set_power(&lora_dev, LORA_POWER_13_DBM);
         lora_set_channel(&lora_dev, TMTC_CHANNEL);
         ESP_LOGI(TAG, "LoRa initialized");
     }
@@ -426,7 +430,11 @@ void app_main(void) {
     // BMP280 initialization
     {
         bmp280_params_t params;
-        bmp280_init_default_params(&params);
+        params.mode = BMP280_MODE_NORMAL;
+        params.filter = BMP280_FILTER_2;
+        params.oversampling_pressure = BMP280_STANDARD;
+        params.oversampling_temperature = BMP280_ULTRA_LOW_POWER;
+        params.standby = BMP280_STANDBY_05;
 
         bmp280_init_desc(
             &bmp_dev,
@@ -453,7 +461,7 @@ void app_main(void) {
             SCL_GPIO_PIN
         );
         vTaskDelay(pdMS_TO_TICKS(200));
-        if (mpu6050_init(&mpu_dev) || mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_500) || mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_4)) {
+        if (mpu6050_init(&mpu_dev) || mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_250) || mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_8) || mpu6050_set_dlpf_mode(&mpu_dev, MPU6050_DLPF_3)) {
             ESP_LOGE(TAG, "MPU6050 failed to init");
             avionics_abort(7);
         }
