@@ -60,7 +60,7 @@ void app_main(void) {
 
     while (1) {
         // read lora
-        int available_bytes = lora_receive_bytes(&lora_dev, bytes, sizeof(bytes));
+        int available_bytes = lora_receive_bytes(&lora_dev, bytes, sizeof(bytes), portMAX_DELAY);
         if (available_bytes > 0) {
             // sends the raw binary packet via USB UART
             uart_write_bytes(PORT_USB, (const void*)bytes, available_bytes);

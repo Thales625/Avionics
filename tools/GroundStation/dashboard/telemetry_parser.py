@@ -17,9 +17,13 @@ def parse_telemetry_header(filepath):
         raise ValueError("TELEMETRY_MAGIC not found in defines")
     magic_val = int(magic_str, 16)
 
+    # get payload struct
+    payload_struct_data = header.classes.get("lora_payload_t")
+    if not payload_struct_data: raise ValueError("Struct lora_payload_t was not found.")
+
     # get packet struct
-    struct_data = header.classes.get("telemetry_packet_t")
-    if not struct_data: raise ValueError("Struct telemetry_packet_t was not found.")
+    packet_struct_data = header.classes.get("lora_packet_t")
+    if not packet_struct_data: raise ValueError("Struct telemetry_packet_t was not found.")
 
     fmt = "<" # little endian
     fields = []
@@ -36,11 +40,23 @@ def parse_telemetry_header(filepath):
         "double": 'd'
     }
 
-    for prop in struct_data["properties"]["public"]:
+    for prop in packet_struct_data["properties"]["public"]:
         c_type = prop["type"]
         c_name = prop["name"]
 
-        if c_type in type_map:
+        if c_type == "lora_payload_t":
+            for payload_prop in payload_struct_data["properties"]["public"]:
+                payload_c_type = payload_prop["type"]
+                payload_c_name = payload_prop["name"]
+
+                if payload_c_type in type_map:
+                    fmt += type_map[payload_c_type]
+                    fields.append(payload_c_name)
+                elif c_type == "vector3f_t":
+                    fmt += "3f"
+                    fields.extend([f"{payload_c_name}_x", f"{payload_c_name}_y", f"{payload_c_name}_z"])
+
+        elif c_type in type_map:
             fmt += type_map[c_type]
             fields.append(c_name)
 

@@ -128,8 +128,11 @@ class TelemetryLink:
                         # data to dict
                         packet = dict(zip(self.PACKET_FIELDS, unpacked_data))
 
+                        print(packet)
+
                         # valid packet
-                        if packet["checksum"]==self.crc16(full_packet[:-2]):
+                        # if packet["checksum"]==self.crc16(full_packet[4:-2]):
+                        if packet["checksum"]==self.crc16(rest_of_packet[:-3] if self.HAS_RSSI else rest_of_packet[:-2]):
                             # remove validation data
                             del packet["magic"]
                             del packet["checksum"]
