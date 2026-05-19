@@ -1,4 +1,5 @@
 #include "freertos/FreeRTOS.h" // IWYU pragma: keep
+#include "freertos/projdefs.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "esp_err.h"
@@ -10,6 +11,7 @@
 
 #include "math_helper.h"
 #include "flight_logic.h"
+#include "portmacro.h"
 #include "tmtc.h"
 
 #include "mpu6050.h"
@@ -19,17 +21,13 @@
 #include "w25q64.h"
 
 #define FLASH_PAGE_SIZE 256
-#define PACKETS_PER_PAGE (FLASH_PAGE_SIZE / sizeof(telemetry_packet_t))
-#define BYTES_PER_PAGE (PACKETS_PER_PAGE * sizeof(telemetry_packet_t))
-
+#define PACKETS_PER_PAGE (FLASH_PAGE_SIZE / sizeof(flash_packet_t))
+#define BYTES_PER_PAGE (PACKETS_PER_PAGE * sizeof(flash_packet_t))
 #define SPI_MISO GPIO_NUM_25
 #define SPI_MOSI GPIO_NUM_27
 #define SPI_CLK GPIO_NUM_26
 #define W25Q_CS GPIO_NUM_14
-
-#define GPS_TX GPIO_NUM_35
-#define GPS_RX GPIO_NUM_32
-#define GPS_UART UART_NUM_1
+#define FLASH_SAMPLING 3
 
 #define LORA_TX GPIO_NUM_16
 #define LORA_RX GPIO_NUM_17
@@ -40,14 +38,18 @@
 #define LORA_BAUD_RATE 9600
 #define LORA_SAMPLING 5
 
+#define GPS_TX GPIO_NUM_35
+#define GPS_RX GPIO_NUM_32
+#define GPS_UART UART_NUM_1
+
 #define SDA_GPIO_PIN GPIO_NUM_21
 #define SCL_GPIO_PIN GPIO_NUM_22
 
 #define PARACHUTE_PIN GPIO_NUM_18
 #define LED_PIN GPIO_NUM_2
-
 #define BOOT_PIN GPIO_NUM_0
 
+/*
 static bool packet_is_empty(const telemetry_packet_t *pkt) {
     const uint8_t *p = (const uint8_t *)pkt;
 
@@ -59,6 +61,7 @@ static bool packet_is_empty(const telemetry_packet_t *pkt) {
 
     return true;
 }
+*/
 
 static const char* TAG = "avionics";
 
@@ -69,7 +72,9 @@ static gps_dev_t gps_dev = { 0 };
 static bmp280_t bmp_dev = { 0 };
 static mpu6050_dev_t mpu_dev = { 0 };
 
-static QueueHandle_t telemetry_queue;
+static QueueHandle_t flash_queue;
+static QueueHandle_t lora_queue;
+static QueueHandle_t telecommand_queue;
 
 static void blink(uint32_t duration) {
     gpio_set_level(LED_PIN, 1);
@@ -96,6 +101,14 @@ static void avionics_abort(int code) {
 }
 
 static void avionics_task(void *arg) {
+    // lora
+    uint32_t lora_counter = 0;
+    lora_payload_t lora_payload;
+
+    // flash
+    uint32_t flash_counter = 0;
+    flash_payload_t flash_payload;
+
     // init flight logic core
     flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
     if (bmp280_read_float(&bmp_dev, &flight_logic.state.temperature, &flight_logic.state.pressure) != ESP_OK) {
@@ -161,58 +174,68 @@ static void avionics_task(void *arg) {
         // ESP_LOGI(TAG, "phase: %d, altitude: %.6f, pressure: %.2f, |accel|: %.2f, sats: %d, lat: %d, lon: %d", flight_logic.state.phase, flight_logic.altitude_baro, flight_logic.state.pressure, sqrtf(flight_logic.state.accel.x*flight_logic.state.accel.x + flight_logic.state.accel.y*flight_logic.state.accel.y + flight_logic.state.accel.z*flight_logic.state.accel.z), flight_logic.state.satellites, flight_logic.state.lat_nmea, flight_logic.state.lon_nmea);
 
         // send data to telemetry
-        if (xQueueSend(telemetry_queue, &flight_logic.state, 0) != pdTRUE) {
-            ESP_LOGW(TAG, "Skip sample: queue is full!");
-        } else {
-            UBaseType_t items_in_queue = uxQueueMessagesWaiting(telemetry_queue);
-            ESP_LOGI(TAG, "samples in queue: %d", items_in_queue);
+        {
+            if (lora_counter++ >= LORA_SAMPLING) {
+                lora_counter = 0;
+
+                lora_payload.ut = flight_logic.state.ut;
+                lora_payload.accel_mag = sqrtf(flight_logic.state.accel.x*flight_logic.state.accel.x + flight_logic.state.accel.y*flight_logic.state.accel.y + flight_logic.state.accel.z*flight_logic.state.accel.z);
+                lora_payload.ang_vel_mag = sqrtf(flight_logic.state.ang_vel.x*flight_logic.state.ang_vel.x + flight_logic.state.ang_vel.y*flight_logic.state.ang_vel.y + flight_logic.state.ang_vel.z*flight_logic.state.ang_vel.z);
+                lora_payload.pressure = flight_logic.state.pressure;
+                lora_payload.temperature = flight_logic.state.temperature;
+                lora_payload.altitude = flight_logic.altitude_baro;
+                lora_payload.lat_nmea = flight_logic.state.lat_nmea;
+                lora_payload.lon_nmea = flight_logic.state.lon_nmea;
+                lora_payload.satellites = flight_logic.state.satellites;
+                lora_payload.phase = (uint8_t) flight_logic.state.phase;
+
+                if (xQueueSend(lora_queue, &lora_payload, 0) != pdTRUE) {
+                    ESP_LOGW(TAG, "skip sample: lora queue is full!");
+                } else {
+                    UBaseType_t items_in_queue = uxQueueMessagesWaiting(lora_queue);
+                    ESP_LOGI(TAG, "samples in lora queue: %d", items_in_queue);
+                }
+            }
+
+            // DEBUG
+            if (0 && flash_counter++ >= FLASH_SAMPLING) {
+                flash_counter = 0;
+
+                flash_payload.ut = flight_logic.state.ut;
+                flash_payload.accel = flight_logic.state.accel;
+                flash_payload.ang_vel = flight_logic.state.ang_vel;
+                flash_payload.pressure = flight_logic.state.pressure;
+                flash_payload.temperature = flight_logic.state.temperature;
+                flash_payload.lat_nmea = flight_logic.state.lat_nmea;
+                flash_payload.lon_nmea = flight_logic.state.lon_nmea;
+                flash_payload.satellites = flight_logic.state.satellites;
+                flash_payload.phase = (uint8_t) flight_logic.state.phase;
+
+                if (xQueueSend(flash_queue, &flash_payload, 0) != pdTRUE) {
+                    ESP_LOGW(TAG, "skip sample: flash queue is full!");
+                } else {
+                    UBaseType_t items_in_queue = uxQueueMessagesWaiting(flash_queue);
+                    ESP_LOGI(TAG, "samples in flash queue: %d", items_in_queue);
+                }
+            }
         }
     }
     vTaskDelete(NULL);
 }
 
-static void telemetry_task(void *arg) {
-    // flash memory
-    telemetry_packet_t page_buffer[PACKETS_PER_PAGE]; // write buffer
+static void flash_task(void *arg) {
+    flash_packet_t page_buffer[PACKETS_PER_PAGE]; // write buffer
+    flash_packet_t packet;
+    flash_payload_t payload;
     uint32_t offset = 0;
     uint32_t current_flash_addr = 0;
     int32_t last_erased_sector = -1;
 
-    // LoRa
-    telemetry_packet_t packet;
-    flight_state_t sample; // queue sample
-    uint32_t lora_counter = 0;
-
     while (1) {
-        if (xQueueReceive(telemetry_queue, &sample, portMAX_DELAY)) {
-            // populate packet
+        if (xQueueReceive(flash_queue, &payload, portMAX_DELAY)) {
             packet.magic = TELEMETRY_MAGIC;
+            packet.payload = payload;
 
-            packet.ut = sample.ut;
-            packet.phase = (uint8_t) sample.phase;
-            packet.accel = sample.accel;
-            packet.ang_vel = sample.ang_vel;
-            packet.pressure = sample.pressure;
-            packet.temperature = sample.temperature;
-            packet.lat_nmea = sample.lat_nmea;
-            packet.lon_nmea = sample.lon_nmea;
-            packet.satellites = sample.satellites;
-
-            packet.checksum = crc16((const uint8_t*)&packet, sizeof(telemetry_packet_t) - sizeof(uint16_t));
-
-            // send via LoRa
-            if (lora_counter++ >= LORA_SAMPLING) {
-                lora_counter = 0;
-                lora_send_bytes(&lora_dev, (uint8_t *)&packet, sizeof(packet));
-
-                if (gpio_get_level(lora_dev.aux_pin) == 1) {
-                    lora_send_bytes(&lora_dev, (uint8_t *)&packet, sizeof(packet));
-                } else {
-                    ESP_LOGW(TAG, "Skip LoRa send: LoRa is busy!");
-                }
-            }
-
-            // add to flash mem buffer
             page_buffer[offset++] = packet;
 
             if (offset >= PACKETS_PER_PAGE) {
@@ -245,6 +268,80 @@ static void telemetry_task(void *arg) {
     vTaskDelete(NULL);
 }
 
+static void lora_task(void *arg) {
+    lora_packet_t packet;
+    lora_payload_t payload;
+
+    // telecommand_payload_t telecommand;
+    // uint32_t tc_magic = 0;
+    // uint16_t tc_checksum = 0;
+    // uint8_t tc_byte;
+
+    while (1) {
+        // transmit telemetry
+        // if (xQueueReceive(lora_queue, &payload, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if (xQueueReceive(lora_queue, &payload, portMAX_DELAY) == pdTRUE) {
+            packet.magic = TELEMETRY_MAGIC;
+            packet.payload = payload;
+            packet.checksum = crc16((const uint8_t*)&payload, sizeof(lora_payload_t));
+
+            while (gpio_get_level(lora_dev.aux_pin) == 0) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+
+            lora_send_bytes(&lora_dev, (uint8_t *)&packet, sizeof(packet));
+        }
+
+        /*
+        // receive telecommand
+        while (lora_receive_bytes(&lora_dev, (uint8_t *)&tc_byte, sizeof(tc_byte), pdMS_TO_TICKS(5)) == 1) {
+            tc_magic = (tc_magic << 8) | tc_byte;
+
+            if (tc_magic == TELECOMMAND_MAGIC) {
+                ESP_LOGI(TAG, "Received telecommand magic!");
+
+                vTaskDelay(pdMS_TO_TICKS(20));
+
+                if (lora_receive_bytes(&lora_dev, (uint8_t *)&telecommand, sizeof(telecommand_payload_t), pdMS_TO_TICKS(10)) == sizeof(telecommand_payload_t)) {
+                    if (lora_receive_bytes(&lora_dev, (uint8_t *)&tc_checksum, sizeof(tc_checksum), pdMS_TO_TICKS(10)) == sizeof(tc_checksum)) {
+                        if (tc_checksum == crc16((const uint8_t*)&telecommand, sizeof(telecommand_payload_t))) {
+                            if (xQueueSend(telecommand_queue, &telecommand, 0) != pdTRUE) {
+                                ESP_LOGW(TAG, "skip tc: queue full!");
+                            }
+                        }
+                    }
+                }
+
+                tc_magic = 0;
+            }
+        }
+        */
+        /*
+        if (lora_receive_bytes(&lora_dev, (uint8_t *)&tc_byte, sizeof(tc_byte), 0) == sizeof(tc_byte)) {
+            tc_magic <<= 8;
+            tc_magic |= tc_byte;
+            if (tc_magic == TELECOMMAND_MAGIC) {
+                if (lora_receive_bytes(&lora_dev, (uint8_t *)&telecommand, sizeof(telecommand_payload_t), pdMS_TO_TICKS(10)) == sizeof(telecommand_payload_t)) {
+                    if (lora_receive_bytes(&lora_dev, (uint8_t *)&tc_checksum, sizeof(tc_checksum), pdMS_TO_TICKS(10)) == sizeof(tc_checksum)) {
+                        if (tc_checksum == crc16((const uint8_t*)&telecommand, sizeof(telecommand_payload_t))) {
+                            if (xQueueSend(telecommand_queue, &telecommand, 0) != pdTRUE) {
+                                ESP_LOGW(TAG, "skip sample: telecommand queue is full!");
+                            } else {
+                                UBaseType_t items_in_queue = uxQueueMessagesWaiting(telecommand_queue);
+                                ESP_LOGI(TAG, "samples in telecommand queue: %d", items_in_queue);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        */
+    }
+
+    vTaskDelete(NULL);
+}
+
+/*
 static void read_telemetry(void *arg) {
     telemetry_packet_t pkt;
     uint32_t address = 0x000000;
@@ -300,10 +397,13 @@ static void read_telemetry(void *arg) {
 
     vTaskDelete(NULL);
 }
+*/
 
 void app_main(void) {
-    // Create xQueue
-    telemetry_queue = xQueueCreate(32, sizeof(flight_state_t));
+    // create xQueue
+    flash_queue = xQueueCreate(32, sizeof(flash_payload_t));
+    lora_queue = xQueueCreate(32, sizeof(lora_payload_t));
+    telecommand_queue = xQueueCreate(16, sizeof(telecommand_packet_t));
 
     // BOOT BUTTON configuration
     {
@@ -381,7 +481,7 @@ void app_main(void) {
         // read flash memory
         if (boot_pressed) {
             ESP_LOGI(TAG, "Boot button pressed");
-            xTaskCreate(read_telemetry, "read_telemetry", 4096, NULL, 2, NULL);
+            // xTaskCreate(read_telemetry, "read_telemetry", 4096, NULL, 2, NULL);
             return;
         }
 
@@ -470,5 +570,6 @@ void app_main(void) {
 
     // create tasks
     xTaskCreatePinnedToCore(avionics_task, "avionics_task", 4096, NULL, 10, NULL, 1); // APP_CPU
-    xTaskCreatePinnedToCore(telemetry_task, "telemetry_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
+    xTaskCreatePinnedToCore(lora_task, "lora_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
+    // xTaskCreatePinnedToCore(flash_task, "flash_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
 }
