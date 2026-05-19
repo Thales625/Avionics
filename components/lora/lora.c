@@ -212,14 +212,16 @@ void lora_send_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size) {
     uart_write_bytes(dev->uart_num, (const uint8_t *)bytes, size);
 }
 
-int lora_receive_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size) {
+int lora_receive_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size, TickType_t timeout) {
     if (dev == NULL) return -1;
 
     size_t available_bytes = 0;
-    ESP_ERROR_CHECK(uart_get_buffered_data_len(dev->uart_num, &available_bytes));
+    if (uart_get_buffered_data_len(dev->uart_num, &available_bytes) != ESP_OK) {
+        return -1;
+    }
 
     if (available_bytes > 0) {
-        return uart_read_bytes(dev->uart_num, bytes, available_bytes > size ? size : available_bytes, 0);
+        return uart_read_bytes(dev->uart_num, bytes, available_bytes > size ? size : available_bytes, timeout);
     }
 
     return 0;
