@@ -27,7 +27,7 @@
 #define SPI_MOSI GPIO_NUM_27
 #define SPI_CLK GPIO_NUM_26
 #define W25Q_CS GPIO_NUM_14
-#define FLASH_SAMPLING 3
+#define FLASH_SAMPLING 5
 
 #define LORA_TX GPIO_NUM_16
 #define LORA_RX GPIO_NUM_17
@@ -36,7 +36,7 @@
 #define LORA_AUX GPIO_NUM_34
 #define LORA_UART UART_NUM_2
 #define LORA_BAUD_RATE 9600
-#define LORA_SAMPLING 5
+#define LORA_SAMPLING 20
 
 #define GPS_TX GPIO_NUM_35
 #define GPS_RX GPIO_NUM_32
@@ -92,7 +92,7 @@ static void avionics_abort(int code) {
 
     // abort loop
     while (1) {
-        for (int i=-1; i<code; i++) {
+        for (int i=0; i<code; i++) {
             blink(100);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
@@ -271,6 +271,7 @@ static void flash_task(void *arg) {
 static void lora_task(void *arg) {
     lora_packet_t packet;
     lora_payload_t payload;
+    packet.magic = TELEMETRY_MAGIC;
 
     // telecommand_payload_t telecommand;
     // uint32_t tc_magic = 0;
@@ -279,12 +280,11 @@ static void lora_task(void *arg) {
 
     while (1) {
         // transmit telemetry
-        // if (xQueueReceive(lora_queue, &payload, pdMS_TO_TICKS(10)) == pdTRUE) {
         if (xQueueReceive(lora_queue, &payload, portMAX_DELAY) == pdTRUE) {
-            packet.magic = TELEMETRY_MAGIC;
             packet.payload = payload;
             packet.checksum = crc16((const uint8_t*)&payload, sizeof(lora_payload_t));
 
+            // wait if lora is busy
             while (gpio_get_level(lora_dev.aux_pin) == 0) {
                 vTaskDelay(pdMS_TO_TICKS(10));
             }
@@ -402,7 +402,7 @@ static void read_telemetry(void *arg) {
 void app_main(void) {
     // create xQueue
     flash_queue = xQueueCreate(32, sizeof(flash_payload_t));
-    lora_queue = xQueueCreate(32, sizeof(lora_payload_t));
+    lora_queue = xQueueCreate(16, sizeof(lora_payload_t));
     telecommand_queue = xQueueCreate(16, sizeof(telecommand_packet_t));
 
     // BOOT BUTTON configuration
@@ -512,9 +512,11 @@ void app_main(void) {
             ESP_LOGE(TAG, "LoRa failed to init");
             avionics_abort(4);
         }
-        // lora_set_power(&lora_dev, LORA_POWER_17_DBM);
-        lora_set_power(&lora_dev, LORA_POWER_13_DBM);
         lora_set_channel(&lora_dev, TMTC_CHANNEL);
+        lora_set_power(&lora_dev, LORA_POWER_22_DBM);
+        // lora_set_power(&lora_dev, LORA_POWER_17_DBM);
+        // lora_set_power(&lora_dev, LORA_POWER_13_DBM);
+        lora_set_air_data_rate(&lora_dev, TMTC_AIR_DATA_RATE);
         ESP_LOGI(TAG, "LoRa initialized");
     }
 
