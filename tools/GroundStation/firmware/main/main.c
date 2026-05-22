@@ -36,8 +36,11 @@ void app_main(void) {
         lora_dev.channel = TMTC_CHANNEL;
         ESP_ERROR_CHECK(lora_init(&lora_dev));
         lora_set_rssi(&lora_dev, true);
-        lora_set_power(&lora_dev, LORA_POWER_13_DBM);
         lora_set_channel(&lora_dev, TMTC_CHANNEL);
+        lora_set_power(&lora_dev, LORA_POWER_22_DBM);
+        // lora_set_power(&lora_dev, LORA_POWER_17_DBM);
+        // lora_set_power(&lora_dev, LORA_POWER_13_DBM);
+        lora_set_air_data_rate(&lora_dev, TMTC_AIR_DATA_RATE);
     }
 
     // init usb
