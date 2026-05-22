@@ -138,7 +138,7 @@ esp_err_t lora_set_rssi(lora_dev_t *dev, bool enable) {
     return ESP_OK;
 }
 
-esp_err_t lora_set_power(lora_dev_t *dev, lora_power_t power) {
+esp_err_t lora_set_air_data_rate(lora_dev_t *dev, lora_air_data_rate_t rate) {
     if (dev == NULL) return ESP_ERR_INVALID_ARG;
 
     // config mode
@@ -152,6 +152,66 @@ esp_err_t lora_set_power(lora_dev_t *dev, lora_power_t power) {
     uart_flush_input(dev->uart_num);
 
     // read REG0 command
+    uint8_t read_cmd[3] = {0xC1, 0x02, 0x01};
+    uart_write_bytes(dev->uart_num, (const uint8_t *)read_cmd, 3);
+    uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+    lora_wait_aux(dev);
+
+    // read response (header + address + length + value)
+    uint8_t response[4] = {0};
+    int len = uart_read_bytes(dev->uart_num, response, 4, pdMS_TO_TICKS(500));
+
+    if (len != 4 || response[0] != 0xC1 || response[1] != 0x02) {
+        // communication failed: back to normal mode
+        gpio_set_level(dev->m0_pin, 0);
+        gpio_set_level(dev->m1_pin, 0);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        lora_wait_aux(dev);
+        return ESP_FAIL;
+    }
+
+    uint8_t reg0_val = response[3];
+
+    // clear bits [2:0] (Air Data Rate)
+    reg0_val &= 0xF8;
+
+    // set new air data rate
+    reg0_val |= (rate & 0x07);
+
+    // write REG0
+    uint8_t write_cmd[4] = {0xC0, 0x02, 0x01, reg0_val};
+    uart_write_bytes(dev->uart_num, (const uint8_t *)write_cmd, 4);
+    uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+    lora_wait_aux(dev);
+
+    // normal mode
+    gpio_set_level(dev->m0_pin, 0);
+    gpio_set_level(dev->m1_pin, 0);
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+    lora_wait_aux(dev);
+
+    return ESP_OK;
+}
+
+esp_err_t lora_set_power(lora_dev_t *dev, lora_power_t power) {
+    if (dev == NULL) return ESP_ERR_INVALID_ARG;
+
+    // config mode
+    gpio_set_level(dev->m0_pin, 1);
+    gpio_set_level(dev->m1_pin, 1);
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+    lora_wait_aux(dev);
+
+    // clear uart buffer
+    uart_flush_input(dev->uart_num);
+
+    // read REG1 command
     uint8_t read_cmd[3] = {0xC1, 0x03, 0x01};
     uart_write_bytes(dev->uart_num, (const uint8_t *)read_cmd, 3);
     uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
