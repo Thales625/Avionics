@@ -3,6 +3,7 @@
 **/sdkconfig.old
 
 # tools
+tools/GroundStation/dashboard/assets/maps/*
 tools/Analysis/*.txt
 tools/Simulation/*.txt
 tools/Simulation/flight_logic_bindings.py

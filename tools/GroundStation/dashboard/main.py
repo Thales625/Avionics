@@ -5,6 +5,7 @@ if __name__ == "__main__":
 
     from widgets.graph import GraphWidget
     from widgets.status import StatusWidget
+    from widgets.gps import GpsWidget
 
     app = init()
 
@@ -20,12 +21,13 @@ if __name__ == "__main__":
             window.store,
             {
                 "rssi": lambda val: f"RSSI: {val} dBm",
-                "ut": lambda val: f"ut: {val:.1f} s",
+                "ut": lambda val: f"Time: {val:.1f} s",
                 "phase": lambda val: f"Phase: {val}",
                 "pressure": lambda val: f"Press: {val:.0f} Pa",
-                "temperature": lambda val: f"Temp: {val:.0f} °C"
+                "temperature": lambda val: f"Temp: {val:.0f} °C",
+                "satellites": lambda val: f"Satellites: {val}"
             },
-            # interval=0.2 # 200ms
+            interval=0.2 # 200ms
         )
     )
 
@@ -34,7 +36,8 @@ if __name__ == "__main__":
         GraphWidget(
             "Acceleration",
             window.store,
-            "ut", "accel_mag"
+            "ut", "accel_mag",
+            min_y=0, max_y=5
         )
     )
 
@@ -43,16 +46,29 @@ if __name__ == "__main__":
         GraphWidget(
             "Gyro",
             window.store,
-            "ut", "ang_vel_mag"
+            "ut", "ang_vel_mag",
+            min_y=0, max_y=180
         )
     )
 
-    # gps graph
+    # altitude graph
     window.add_widget(
         GraphWidget(
+            "Altitude",
+            window.store,
+            "ut", "altitude",
+            min_y=-10, max_y=150
+        )
+    )
+
+    # gps widget
+    window.add_widget(
+        GpsWidget(
             "GPS",
             window.store,
-            "lat_nmea", "lon_nmea"
+            "lat_nmea", "lon_nmea",
+            "assets/maps/anglo.tiff",
+            interval=0.5 # 500ms
         )
     )
 
