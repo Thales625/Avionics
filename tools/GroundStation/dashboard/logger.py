@@ -4,7 +4,7 @@ import time
 from enum import Enum
 
 class LogLevel(Enum):
-    INFO = ("", "\033[32m")   # green
+    INFO = ("I", "\033[32m")   # green
     WARN = ("W", "\033[93m")  # yellow
     ERROR = ("E", "\033[31m") # red
     DEBUG = ("D", "\033[90m") # gray
@@ -21,17 +21,9 @@ class LogLevel(Enum):
 class Logger:
     RESET = "\033[0m"
 
-    _start_time = time.monotonic()
-
     @staticmethod
     def _elapsed() -> str:
-        elapsed = int(time.monotonic() - Logger._start_time)
-
-        hours = elapsed // 3600
-        minutes = (elapsed % 3600) // 60
-        seconds = elapsed % 60
-
-        return f"{hours:02}:{minutes:02}:{seconds:02}"
+        return time.strftime("%H:%M:%S", time.localtime())
 
     @staticmethod
     def _log(level: LogLevel, *message: object) -> None:
@@ -62,3 +54,6 @@ class Logger:
     @staticmethod
     def debug(*message: object) -> None:
         Logger._log(LogLevel.DEBUG, *message)
+
+if __name__ == "__main__":
+    Logger.info("Logger test")

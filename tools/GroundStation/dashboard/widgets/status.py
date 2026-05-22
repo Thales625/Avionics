@@ -50,9 +50,9 @@ class StatusWidget(Widget):
         time_without_signal = self._last_update - self.link.wdt_last_packet
         self.wdt_label.setText(f"WDT: {time_without_signal:.1f} s")
         if time_without_signal >= self.link.WDT_TIMEOUT:
-            self.wdt_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #c62828;")
+            self.wdt_label.setStyleSheet("font-size: 22px; font-weight: bold; color: #c62828;")
         else:
-            self.wdt_label.setStyleSheet("font-size: 16px; font-weight: bold; color: white;")
+            self.wdt_label.setStyleSheet("font-size: 22px; font-weight: bold; color: white;")
 
         # update labels
         for lbl in self.labels:

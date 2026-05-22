@@ -7,7 +7,7 @@ class TelemetryStore:
 
     def add(self, packet):
         for k, v in packet.items():
-            self.data[k].append(v) 
+            self.data[k].append(v)
 
     def get(self, key, index=None):
         if index is None:
@@ -15,7 +15,7 @@ class TelemetryStore:
 
         try:
             return self.data[key][index]
-        except:
+        except IndexError:
             return None
 
     def clear(self, key=None):

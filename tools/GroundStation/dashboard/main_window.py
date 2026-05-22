@@ -60,7 +60,12 @@ class MainWindow(QMainWindow):
         self.conn_toolbar.tick()
 
     def closeEvent(self, a0):
+        # stop timer
+        if self.timer.isActive(): self.timer.stop()
+
+        # disconnect telemetry link
         self.telemetry_link.disconnect()
+
         if a0 is not None: a0.accept()
 
 def init():

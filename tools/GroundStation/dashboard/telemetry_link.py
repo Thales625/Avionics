@@ -128,8 +128,6 @@ class TelemetryLink:
                         # data to dict
                         packet = dict(zip(self.PACKET_FIELDS, unpacked_data))
 
-                        print(packet)
-
                         # valid packet
                         # if packet["checksum"]==self.crc16(full_packet[4:-2]):
                         if packet["checksum"]==self.crc16(rest_of_packet[:-3] if self.HAS_RSSI else rest_of_packet[:-2]):
@@ -141,7 +139,9 @@ class TelemetryLink:
                                 packet["rssi"] = rest_of_packet[-1] - 256
 
                             # update WDT
-                            self.wdt_last_packet = monotonic()
+                            now = monotonic()
+                            # Logger.debug(f"HZ = {1/(now - self.wdt_last_packet)}")
+                            self.wdt_last_packet = now
 
                             packet["ut"] /= 1000 # ms to s
 
