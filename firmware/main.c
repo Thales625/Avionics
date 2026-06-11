@@ -20,13 +20,15 @@
 #include "gps.h"
 #include "w25q64.h"
 
-#define FLASH_PAGE_SIZE 256
-#define PACKETS_PER_PAGE (FLASH_PAGE_SIZE / sizeof(flash_packet_t))
-#define BYTES_PER_PAGE (PACKETS_PER_PAGE * sizeof(flash_packet_t))
+#define BOOT_TIMEOUT 10000
+
 #define SPI_MISO GPIO_NUM_22
 #define SPI_MOSI GPIO_NUM_19
 #define SPI_CLK GPIO_NUM_21
 #define W25Q_CS GPIO_NUM_23
+#define FLASH_PAGE_SIZE 256
+#define PACKETS_PER_PAGE (FLASH_PAGE_SIZE / sizeof(flash_packet_t))
+#define BYTES_PER_PAGE (PACKETS_PER_PAGE * sizeof(flash_packet_t))
 #define FLASH_SAMPLING 5
 
 #define LORA_TX GPIO_NUM_32
@@ -49,11 +51,10 @@
 #define LED_PIN GPIO_NUM_2
 #define BOOT_PIN GPIO_NUM_0
 
-/*
-static bool packet_is_empty(const telemetry_packet_t *pkt) {
+static bool flash_packet_is_empty(const flash_packet_t *pkt) {
     const uint8_t *p = (const uint8_t *)pkt;
 
-    for (size_t i = 0; i < sizeof(telemetry_packet_t); i++) {
+    for (size_t i = 0; i < sizeof(flash_packet_t); i++) {
         if (p[i] != 0xFF) {
             return false;
         }
@@ -61,7 +62,6 @@ static bool packet_is_empty(const telemetry_packet_t *pkt) {
 
     return true;
 }
-*/
 
 static const char* TAG = "avionics";
 
@@ -197,8 +197,106 @@ static void avionics_task(void *arg) {
                 }
             }
 
-            // DEBUG
-            if (0 && flash_counter++ >= FLASH_SAMPLING) {
+            if (flight_logic.state.phase >= PHASE_PRE_FLIGHT) {
+                if (flash_counter++ >= FLASH_SAMPLING) {
+                    flash_counter = 0;
+
+                    flash_payload.ut = flight_logic.state.ut;
+                    flash_payload.accel = flight_logic.state.accel;
+                    flash_payload.ang_vel = flight_logic.state.ang_vel;
+                    flash_payload.pressure = flight_logic.state.pressure;
+                    flash_payload.temperature = flight_logic.state.temperature;
+                    flash_payload.lat_nmea = flight_logic.state.lat_nmea;
+                    flash_payload.lon_nmea = flight_logic.state.lon_nmea;
+                    flash_payload.satellites = flight_logic.state.satellites;
+                    flash_payload.phase = (uint8_t) flight_logic.state.phase;
+
+                    if (xQueueSend(flash_queue, &flash_payload, 0) != pdTRUE) {
+                        ESP_LOGW(TAG, "skip sample: flash queue is full!");
+                    } else {
+                        UBaseType_t items_in_queue = uxQueueMessagesWaiting(flash_queue);
+                        ESP_LOGI(TAG, "samples in flash queue: %d", items_in_queue);
+                    }
+                }
+            }
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+static void avionics_debug_task(void *arg) {
+    // lora
+    uint32_t lora_counter = 0;
+    lora_payload_t lora_payload;
+
+    // flash
+    uint32_t flash_counter = 0;
+    flash_payload_t flash_payload;
+
+    // init flight logic core
+    flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    flight_logic.state.temperature = 23.0f;
+    flight_logic.state.pressure = 1013.0f;
+    flight_logic.state.accel.x = 0.0f;
+    flight_logic.state.accel.y = 0.0f;
+    flight_logic.state.accel.z = 0.0f;
+    flight_logic.state.ang_vel.x = 0.0f;
+    flight_logic.state.ang_vel.y = 0.0f;
+    flight_logic.state.ang_vel.z = 0.0f;
+    flight_logic_init(&flight_logic);
+
+    // frequency
+    TickType_t last_tick = xTaskGetTickCount();
+    const TickType_t interval = pdMS_TO_TICKS(40); // 40 ms = 25 Hz
+
+    // main loop
+    while (1) {
+        vTaskDelayUntil(&last_tick, interval);
+
+        // update ut
+        flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
+
+        // acc: generate data
+
+        // baro: generate data
+        flight_logic.state.pressure = (float)(esp_timer_get_time() / 1000.0f);
+
+        // GPS: generate data
+        flight_logic.state.lat_nmea = 3;
+        flight_logic.state.lon_nmea = 10;
+        flight_logic.state.satellites = 1;
+
+        // update flight logic
+        flight_logic_update(&flight_logic);
+
+        // log values
+        ESP_LOGI(TAG, "phase: %d, altitude: %.6f, pressure: %.2f, |accel|: %.2f, sats: %d, lat: %d, lon: %d", flight_logic.state.phase, flight_logic.altitude_baro, flight_logic.state.pressure, sqrtf(flight_logic.state.accel.x*flight_logic.state.accel.x + flight_logic.state.accel.y*flight_logic.state.accel.y + flight_logic.state.accel.z*flight_logic.state.accel.z), flight_logic.state.satellites, flight_logic.state.lat_nmea, flight_logic.state.lon_nmea);
+
+        // send data to telemetry
+        {
+            if (lora_counter++ >= LORA_SAMPLING) {
+                lora_counter = 0;
+
+                lora_payload.ut = flight_logic.state.ut;
+                lora_payload.accel_mag = sqrtf(flight_logic.state.accel.x*flight_logic.state.accel.x + flight_logic.state.accel.y*flight_logic.state.accel.y + flight_logic.state.accel.z*flight_logic.state.accel.z);
+                lora_payload.ang_vel_mag = sqrtf(flight_logic.state.ang_vel.x*flight_logic.state.ang_vel.x + flight_logic.state.ang_vel.y*flight_logic.state.ang_vel.y + flight_logic.state.ang_vel.z*flight_logic.state.ang_vel.z);
+                lora_payload.pressure = flight_logic.state.pressure;
+                lora_payload.temperature = flight_logic.state.temperature;
+                lora_payload.altitude = flight_logic.altitude_baro;
+                lora_payload.lat_nmea = flight_logic.state.lat_nmea;
+                lora_payload.lon_nmea = flight_logic.state.lon_nmea;
+                lora_payload.satellites = flight_logic.state.satellites;
+                lora_payload.phase = (uint8_t) flight_logic.state.phase;
+
+                if (xQueueSend(lora_queue, &lora_payload, 0) != pdTRUE) {
+                    ESP_LOGW(TAG, "skip sample: lora queue is full!");
+                } else {
+                    UBaseType_t items_in_queue = uxQueueMessagesWaiting(lora_queue);
+                    ESP_LOGI(TAG, "samples in lora queue: %d", items_in_queue);
+                }
+            }
+
+            if (flash_counter++ >= FLASH_SAMPLING) {
                 flash_counter = 0;
 
                 flash_payload.ut = flight_logic.state.ut;
@@ -242,12 +340,12 @@ static void flash_task(void *arg) {
                 uint32_t start_sector = current_flash_addr / W25Q64_SECTOR_SIZE;
                 uint32_t end_sector = (current_flash_addr + BYTES_PER_PAGE - 1) / W25Q64_SECTOR_SIZE;
 
-                if (start_sector > last_erased_sector) {
+                if ((int32_t)start_sector > last_erased_sector) {
                     w25q64_erase_sector(start_sector * W25Q64_SECTOR_SIZE);
                     last_erased_sector = start_sector;
                 }
 
-                if (end_sector > last_erased_sector) {
+                if ((int32_t)end_sector > last_erased_sector) {
                     w25q64_erase_sector(end_sector * W25Q64_SECTOR_SIZE);
                     last_erased_sector = end_sector;
                 }
@@ -341,24 +439,19 @@ static void lora_task(void *arg) {
     vTaskDelete(NULL);
 }
 
-/*
 static void read_telemetry(void *arg) {
-    telemetry_packet_t pkt;
+    flash_packet_t pkt;
     uint32_t address = 0x000000;
 
     for (int i = 0; i < 32; i++) {
-        esp_err_t err = w25q64_read_data(
-            address,
-            (uint8_t *)&pkt,
-            sizeof(telemetry_packet_t)
-        );
+        esp_err_t err = w25q64_read_data(address, (uint8_t *)&pkt, sizeof(flash_packet_t));
 
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to read packet %d", i);
             break;
         }
 
-        if (packet_is_empty(&pkt)) {
+        if (flash_packet_is_empty(&pkt)) {
             ESP_LOGI(TAG, "Reached empty flash area at packet %d", i);
             break;
         }
@@ -368,36 +461,26 @@ static void read_telemetry(void *arg) {
         ESP_LOGI(TAG, "Address: 0x%06" PRIX32, address);
 
         ESP_LOGI(TAG, "magic:       0x%08" PRIX32, pkt.magic);
-        ESP_LOGI(TAG, "ut:          %" PRIu32, pkt.ut);
-        ESP_LOGI(TAG, "phase:       %u", pkt.phase);
+        ESP_LOGI(TAG, "ut:          %" PRIu32, pkt.payload.ut);
+        ESP_LOGI(TAG, "phase:       %" PRIu8, pkt.payload.phase);
 
-        ESP_LOGI(TAG, "accel:       X=%.2f  Y=%.2f  Z=%.2f",
-            pkt.accel.x,
-            pkt.accel.y,
-            pkt.accel.z);
+        ESP_LOGI(TAG, "accel:       X=%.2f  Y=%.2f  Z=%.2f", pkt.payload.accel.y, pkt.payload.accel.x, pkt.payload.accel.z);
+        ESP_LOGI(TAG, "ang_vel:     X=%.2f  Y=%.2f  Z=%.2f", pkt.payload.ang_vel.x, pkt.payload.ang_vel.y, pkt.payload.ang_vel.z);
 
-        ESP_LOGI(TAG, "ang_vel:     X=%.2f  Y=%.2f  Z=%.2f",
-            pkt.ang_vel.x,
-            pkt.ang_vel.y,
-            pkt.ang_vel.z);
+        ESP_LOGI(TAG, "pressure:    %.2f", pkt.payload.pressure);
+        ESP_LOGI(TAG, "temperature: %.2f", pkt.payload.temperature);
 
-        ESP_LOGI(TAG, "pressure:    %.2f", pkt.pressure);
-        ESP_LOGI(TAG, "temperature: %.2f", pkt.temperature);
+        ESP_LOGI(TAG, "lat:         %" PRId32, pkt.payload.lat_nmea);
+        ESP_LOGI(TAG, "lon:         %" PRId32, pkt.payload.lon_nmea);
+        ESP_LOGI(TAG, "satellites:  %" PRIu8, pkt.payload.satellites);
 
-        ESP_LOGI(TAG, "lat:         %.2lf", pkt.lat_nmea);
-        ESP_LOGI(TAG, "lon:         %.2lf", pkt.lon_nmea);
-        ESP_LOGI(TAG, "satellites:  %d", pkt.satellites);
-
-        ESP_LOGI(TAG, "checksum:    0x%04X", pkt.checksum);
-
-        address += sizeof(telemetry_packet_t);
+        address += sizeof(flash_packet_t);
     }
 
     ESP_LOGI(TAG, "Done reading packets");
 
     vTaskDelete(NULL);
 }
-*/
 
 void app_main(void) {
     // create xQueue
@@ -461,9 +544,9 @@ void app_main(void) {
 
         bool boot_pressed = false;
 
-        // 5 seconds
+        // waiting
         TickType_t start = xTaskGetTickCount();
-        while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(5000)) {
+        while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(BOOT_TIMEOUT)) {
             if (gpio_get_level(BOOT_PIN) == 0) {
                 // simple debounce
                 vTaskDelay(pdMS_TO_TICKS(30));
@@ -481,11 +564,18 @@ void app_main(void) {
         // read flash memory
         if (boot_pressed) {
             ESP_LOGI(TAG, "Boot button pressed");
-            // xTaskCreate(read_telemetry, "read_telemetry", 4096, NULL, 2, NULL);
+            xTaskCreate(read_telemetry, "read_telemetry", 4096, NULL, 5, NULL);
             return;
         }
 
         ESP_LOGI(TAG, "Boot button not pressed");
+    }
+
+    // DEBUG
+    {
+        xTaskCreatePinnedToCore(avionics_debug_task, "avionics_task", 4096, NULL, 10, NULL, 1); // APP_CPU
+        xTaskCreatePinnedToCore(flash_task, "flash_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
+        return;
     }
 
     // I2C initialization
@@ -573,5 +663,5 @@ void app_main(void) {
     // create tasks
     xTaskCreatePinnedToCore(avionics_task, "avionics_task", 4096, NULL, 10, NULL, 1); // APP_CPU
     xTaskCreatePinnedToCore(lora_task, "lora_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
-    // xTaskCreatePinnedToCore(flash_task, "flash_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
+    xTaskCreatePinnedToCore(flash_task, "flash_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
 }
