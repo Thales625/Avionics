@@ -15,7 +15,7 @@
 // uplink
 typedef struct __attribute__((packed)) {
     uint8_t id;
-    uint32_t param;
+    int32_t param;
 } telecommand_payload_t;
 
 typedef struct __attribute__((packed)) {
