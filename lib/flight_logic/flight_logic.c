@@ -43,7 +43,7 @@ static const char* TAG = "flight_logic";
 #endif
 
 void flight_logic_init(flight_logic_t *core) {
-    core->state.phase = PHASE_PRE_FLIGHT;
+    core->state.phase = PHASE_WAITING;
 
     core->pressure_0 = core->state.pressure;
 
@@ -59,7 +59,7 @@ void flight_logic_update(flight_logic_t *core) {
     static float prev_pressure = 0.0f;
     static float max_altitude_baro = -999.9f;
     static uint32_t liftoff_count = 0;
-    static uint32_t parachute_EJECTION_CONFIRMATION_COUNT = 0;
+    static uint32_t parachute_ejection_count = 0;
     static uint32_t descent_time = 0;
     static uint32_t ut_0 = 0;
 
@@ -90,6 +90,10 @@ void flight_logic_update(flight_logic_t *core) {
             break;
 
         case PHASE_PRE_FLIGHT:
+            if (!core->should_arm) {
+                core->state.phase = PHASE_WAITING;
+                break;
+            }
             if (core->state.accel.x*core->state.accel.x + core->state.accel.y*core->state.accel.y + core->state.accel.z*core->state.accel.z > _acc_threshold2) {
                 liftoff_count++;
                 if (liftoff_count >= LAUNCH_CONFIRMATION_COUNT) {
@@ -99,7 +103,7 @@ void flight_logic_update(flight_logic_t *core) {
                 liftoff_count = 0;
             }
 
-            ESP_LOGI(TAG, "ascent_count: %d", liftoff_count);
+            // ESP_LOGI(TAG, "ascent_count: %d", liftoff_count);
             break;
 
         case PHASE_ASCENT:
@@ -111,11 +115,11 @@ void flight_logic_update(flight_logic_t *core) {
 
             if (core->altitude_baro > max_altitude_baro) {
                 max_altitude_baro = core->altitude_baro;
-                parachute_EJECTION_CONFIRMATION_COUNT = 0; // reset count
+                parachute_ejection_count = 0; // reset count
             } else if (max_altitude_baro - core->altitude_baro >= EJECTION_ALTITUDE_THRESHOLD) {
-                parachute_EJECTION_CONFIRMATION_COUNT++;
+                parachute_ejection_count++;
 
-                if (parachute_EJECTION_CONFIRMATION_COUNT >= EJECTION_CONFIRMATION_COUNT) { // EJECT
+                if (parachute_ejection_count >= EJECTION_CONFIRMATION_COUNT) { // EJECT
                     core->state.phase = PHASE_PARACHUTE_DEPLOY;
                 }
             }
