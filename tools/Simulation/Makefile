@@ -1,19 +1,18 @@
-FIRMWARE_DIR := ../../firmware
 LIB_DIR := ../../lib
 FLIGHT_LOGIC_DIR := $(LIB_DIR)/flight_logic
+BINDINGS_DIR := bindings
 
-all: main
+$(BINDINGS_DIR)/libavionics.so: $(FLIGHT_LOGIC_DIR)/flight_logic.c $(FLIGHT_LOGIC_DIR)/flight_logic.h
+	gcc -Wall -fPIC -DSIMULATION_BUILD -shared -o $(BINDINGS_DIR)/libavionics.so -I$(LIB_DIR)/math_helper $(FLIGHT_LOGIC_DIR)/flight_logic.c
 
-libavionics.so: $(FLIGHT_LOGIC_DIR)/flight_logic.c $(FLIGHT_LOGIC_DIR)/flight_logic.h
-	gcc -Wall -fPIC -DSIMULATION_BUILD -shared -o libavionics.so -I$(LIB_DIR)/math_helper $(FLIGHT_LOGIC_DIR)/flight_logic.c
+bindings: $(FLIGHT_LOGIC_DIR)/flight_logic.h $(BINDINGS_DIR)/libavionics.so
+	ctypesgen -Dbool=int -DSIMULATION_BUILD -D__extension__= -l $(BINDINGS_DIR)/libavionics.so -o $(BINDINGS_DIR)/flight_logic_bindings.py -I$(LIB_DIR)/math_helper $(FLIGHT_LOGIC_DIR)/flight_logic.h
 
-bindings: $(FLIGHT_LOGIC_DIR)/flight_logic.h libavionics.so
-	ctypesgen -Dbool=int -DSIMULATION_BUILD -D__extension__= -l ./libavionics.so -o flight_logic_bindings.py -I$(LIB_DIR)/math_helper $(FLIGHT_LOGIC_DIR)/flight_logic.h
+# ENTRIES
+main: $(BINDINGS_DIR)/libavionics.so bindings
+	python -m main
 
-main: libavionics.so bindings
-	python main.py
+clean:
+	rm -f $(BINDINGS_DIR)/libavionics.so $(BINDINGS_DIR)/flight_logic_bindings.py
 
 .PHONY: clean
-clean:
-	rm -f libavionics.so flight_logic_bindings.py
-	rm -rf __pycache__

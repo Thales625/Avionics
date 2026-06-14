@@ -76,5 +76,5 @@ class Engine:
         plt.show()
 
 if __name__ == "__main__":
-    eng = Engine("./thrust.txt")
+    eng = Engine("environment/thrust.txt")
     eng.plot()

@@ -1,6 +1,6 @@
 import numpy as np
 
-from solver import RK4
+from environment.solver import RK4
 
 class Vessel:
     def __init__(self, dry_mass, celestial_body) -> None:
@@ -49,7 +49,7 @@ class Vessel:
                 (
                     self._thrust +
                     -(1.57075*self.radius**2)*self.cd*celestial_body.rho(h)*v*abs(v)
-                ) / mass + 
+                ) / mass +
                 celestial_body.gravity(h)
             )
 
@@ -59,7 +59,7 @@ class Vessel:
             ])
 
         self.solver = RK4(self.state, dSdt)
-    
+
     @property
     def altitude(self):
         return self.state[0]

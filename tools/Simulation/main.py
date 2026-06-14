@@ -1,8 +1,8 @@
-from celestial_body import CelestialBody
-from vessel import Vessel
-from engine import Engine
+from environment.celestial_body import CelestialBody
+from environment.vessel import Vessel
+from environment.engine import Engine
 
-from avionics_wrapper import AvionicsSim
+from bindings.avionics_wrapper import AvionicsSim
 
 import matplotlib.pyplot as plt
 
@@ -10,11 +10,16 @@ if __name__ == "__main__":
     # avionics
     avionics = AvionicsSim()
 
+    print("---Avionics Attribs---")
+    for attrib_name, attrib_type in avionics.list_attribs().items():
+        print(f"\t{attrib_name}: <{attrib_type.__name__}>")
+    print("----------------------")
+
     # simulation
     earth = CelestialBody(5.9723651e+24, 6371000)
     vessel = Vessel(3.0, earth)
 
-    engine = Engine("./thrust.txt")
+    engine = Engine("./environment/thrust.txt")
     vessel.add_engine(engine)
 
     # init avionics
@@ -25,6 +30,9 @@ if __name__ == "__main__":
         press=earth.pressure(0), temp=25.0
     )
     avionics.init()
+
+    # skip waiting phase
+    avionics.state.phase = 2
 
     # graph
     true_altitude_arr = []
@@ -57,8 +65,8 @@ if __name__ == "__main__":
 
         time_arr.append(t)
 
-        altitude_arr.append(avionics.altitude)
-        phase_arr.append(avionics.phase)
+        altitude_arr.append(avionics.altitude_baro)
+        phase_arr.append(avionics.state.phase)
 
         meas_pressure_arr.append(baro_sensor)
         meas_acc_arr.append(acc_sensor)
