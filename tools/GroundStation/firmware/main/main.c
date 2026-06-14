@@ -21,7 +21,9 @@
 #define LORA_BAUD_RATE 9600
 
 static lora_dev_t lora_dev = { 0 };
-static uint8_t bytes[256];
+
+static uint8_t rx_bytes[256];
+static uint8_t tx_bytes[256];
 
 void app_main(void) {
     // init lora
@@ -37,9 +39,9 @@ void app_main(void) {
         ESP_ERROR_CHECK(lora_init(&lora_dev));
         lora_set_rssi(&lora_dev, true);
         lora_set_channel(&lora_dev, TMTC_CHANNEL);
-        lora_set_power(&lora_dev, LORA_POWER_22_DBM);
+        // lora_set_power(&lora_dev, LORA_POWER_22_DBM);
         // lora_set_power(&lora_dev, LORA_POWER_17_DBM);
-        // lora_set_power(&lora_dev, LORA_POWER_13_DBM);
+        lora_set_power(&lora_dev, LORA_POWER_13_DBM);
         lora_set_air_data_rate(&lora_dev, TMTC_AIR_DATA_RATE);
     }
 
@@ -59,19 +61,23 @@ void app_main(void) {
         uart_set_pin(PORT_USB, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     }
 
-    // uint8_t recv_data;
+    // uint8_t usb_recv_data;
 
     while (1) {
-        // read lora
-        int available_bytes = lora_receive_bytes(&lora_dev, bytes, sizeof(bytes), portMAX_DELAY);
+        // read LORA and transmit to USB
+        int available_bytes = lora_receive_bytes(&lora_dev, rx_bytes, sizeof(rx_bytes), 0);
         if (available_bytes > 0) {
-            // sends the raw binary packet via USB UART
-            uart_write_bytes(PORT_USB, (const void*)bytes, available_bytes);
+            // send lora bytes to USB
+            uart_write_bytes(PORT_USB, (const void*)rx_bytes, available_bytes);
         }
 
-        // read data (ToDo)
-        // int len = uart_read_bytes(PORT_USB, &recv_data, 1, TIMEOUT_LOOP);
+        // read USB PORT and transmit to LORA
+        int usb_len = uart_read_bytes(PORT_USB, tx_bytes, sizeof(tx_bytes), pdMS_TO_TICKS(5));
+        if (usb_len > 0) {
+            // send usb bytes to LORA
+            lora_send_bytes(&lora_dev, tx_bytes, usb_len);
+        }
 
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }

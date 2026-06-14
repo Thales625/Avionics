@@ -58,5 +58,5 @@ class StatusWidget(Widget):
         for lbl in self.labels:
             latest_value = self.store.get(lbl.signal_key, -1)
 
-            if latest_value:
+            if latest_value is not None:
                 lbl.setText(lbl.formatter_func(latest_value))

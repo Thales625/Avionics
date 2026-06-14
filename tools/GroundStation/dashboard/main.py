@@ -6,6 +6,7 @@ if __name__ == "__main__":
     from widgets.graph import GraphWidget
     from widgets.status import StatusWidget
     from widgets.gps import GpsWidget
+    from widgets.telecommand import TelecommandWidget
 
     app = init()
 
@@ -67,8 +68,16 @@ if __name__ == "__main__":
             "GPS",
             window.store,
             "lat_nmea", "lon_nmea",
-            "assets/maps/anglo.tiff",
+            "assets/maps/pelotas.tiff",
             interval=0.5 # 500ms
+        )
+    )
+
+    # telecommand widget
+    window.add_widget(
+        TelecommandWidget(
+            "Telecommand",
+            window.telemetry_link
         )
     )
 

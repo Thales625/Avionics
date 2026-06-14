@@ -36,7 +36,7 @@ class MainWindow(QMainWindow):
         self.conn_toolbar = ConnToolbar(self.store, self.telemetry_link)
         self.addToolBar(self.conn_toolbar)
 
-        # -- window --
+        # --- window ---
         self.setWindowTitle(title)
         self.resize(1024, 768)
 

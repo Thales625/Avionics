@@ -2,18 +2,15 @@ import struct
 import threading
 import serial
 import serial.tools.list_ports
+import queue
 from time import sleep, monotonic
 from pathlib import Path
 
 from logger import Logger
 
-from telemetry_parser import parse_telemetry_header
+from telemetry_parser import parse_telecommand_header, parse_telemetry_header
 
 class TelemetryLink:
-    """
-    TODO:
-        - _loop needs to convert messages to packet and send to the esp32
-    """
     def __init__(self, telemetry_queue, telecommand_queue):
         self.telemetry_queue = telemetry_queue
         self.telecommand_queue = telecommand_queue
@@ -27,17 +24,27 @@ class TelemetryLink:
 
         self.HAS_RSSI = True
 
-        # get packet info
+        # get packets info
         base_dir = Path(__file__).resolve().parent
         header_path = (base_dir / "../../../lib/tmtc/tmtc.h").resolve()
+
+        # get TELECOMMAND struct
         try:
-            self.MAGIC_SIZE, self.MAGIC_BYTES, self.PACKET_FORMAT, self.PACKET_FIELDS = parse_telemetry_header(header_path)
+            self.TC_MAGIC_SIZE, self.TC_MAGIC_BYTES, self.TC_PACKET_FORMAT, self.TC_PACKET_FIELDS = parse_telecommand_header(header_path)
         except Exception as e:
-            Logger.error(f"<Parser> Fatal error processing header: {e}")
+            Logger.error(f"<Parser> Fatal error processing telecommand header: {e}")
+            exit()
+
+        # get TELEMETRY struct
+        try:
+            self.TM_MAGIC_SIZE, self.TM_MAGIC_BYTES, self.TM_PACKET_FORMAT, self.TM_PACKET_FIELDS = parse_telemetry_header(header_path)
+        except Exception as e:
+            Logger.error(f"<Parser> Fatal error processing telemetry header: {e}")
             exit()
 
         # get packet size
-        self.PACKET_SIZE = struct.calcsize(self.PACKET_FORMAT)
+        self.TM_PACKET_SIZE = struct.calcsize(self.TM_PACKET_FORMAT)
+        self.TC_PACKET_SIZE = struct.calcsize(self.TC_PACKET_FORMAT)
 
     @staticmethod
     def crc16(data: bytes) -> int:
@@ -102,10 +109,56 @@ class TelemetryLink:
         if self.serial_port and self.serial_port.is_open:
             self.serial_port.close()
 
+    def transmit(self, id, param):
+        if not self.is_running: return False
+
+        packet = {
+            "id": id,
+            "param": param
+        }
+
+        self.telecommand_queue.put(packet)
+
+        return True
+
     def _loop(self):
         sync_buffer = b''
 
         while self.is_running and self.serial_port.is_open:
+            # TELECOMMAND
+            try:
+                while True:
+                    tc = self.telecommand_queue.get_nowait()
+
+                    values = []
+
+                    for field in self.TC_PACKET_FIELDS:
+                        if field == "magic":
+                            values.append(int.from_bytes(self.TC_MAGIC_BYTES, byteorder="big"))
+                        elif field == "checksum":
+                            values.append(0)
+                        else:
+                            value = tc.get(field, 0)
+                            if isinstance(value, float):
+                                value = float(value)
+                            elif isinstance(value, bytes):
+                                value = int.from_bytes(value, byteorder="little", signed=True)
+                                # value = int.from_bytes(value, byteorder="big", signed=True)
+                            values.append(value)
+
+                    packet = struct.pack(self.TC_PACKET_FORMAT, *values)
+                    payload_bytes = packet[self.TC_MAGIC_SIZE : -2]
+                    calculated_crc = self.crc16(payload_bytes)
+
+                    values[self.TC_PACKET_FIELDS.index("checksum")] = calculated_crc
+                    packet = struct.pack(self.TC_PACKET_FORMAT, *values)
+
+                    self.serial_port.write(packet)
+
+            except queue.Empty:
+                pass
+
+            # TELEMETRY
             try:
                 byte = self.serial_port.read(1)
                 if not byte: continue
@@ -113,20 +166,20 @@ class TelemetryLink:
                 sync_buffer += byte
 
                 # limit sync_buffer to MAGIC size
-                if len(sync_buffer) > self.MAGIC_SIZE: sync_buffer = sync_buffer[-self.MAGIC_SIZE:]
+                if len(sync_buffer) > self.TM_MAGIC_SIZE: sync_buffer = sync_buffer[-self.TM_MAGIC_SIZE:]
 
-                if sync_buffer == self.MAGIC_BYTES:
+                if sync_buffer == self.TM_MAGIC_BYTES:
                     # read payload
-                    data_len = self.PACKET_SIZE - self.MAGIC_SIZE + (1 if self.HAS_RSSI else 0)
+                    data_len = self.TM_PACKET_SIZE - self.TM_MAGIC_SIZE + (1 if self.HAS_RSSI else 0)
                     rest_of_packet = self.serial_port.read(data_len)
                     if len(rest_of_packet) == data_len:
-                        full_packet = self.MAGIC_BYTES + (rest_of_packet[:-1] if self.HAS_RSSI else rest_of_packet)
+                        full_packet = self.TM_MAGIC_BYTES + (rest_of_packet[:-1] if self.HAS_RSSI else rest_of_packet)
 
                         # unpack binary packet
-                        unpacked_data = struct.unpack(self.PACKET_FORMAT, full_packet)
+                        unpacked_data = struct.unpack(self.TM_PACKET_FORMAT, full_packet)
 
                         # data to dict
-                        packet = dict(zip(self.PACKET_FIELDS, unpacked_data))
+                        packet = dict(zip(self.TM_PACKET_FIELDS, unpacked_data))
 
                         # valid packet
                         # if packet["checksum"]==self.crc16(full_packet[4:-2]):
