@@ -152,4 +152,3 @@ if __name__ == "__main__":
     Logger.debug(tm_magic_bytes)
     Logger.debug(tm_fmt)
     Logger.debug(tm_fields)
-

@@ -26,7 +26,8 @@ if __name__ == "__main__":
                 "phase": lambda val: f"Phase: {val}",
                 "pressure": lambda val: f"Press: {val:.0f} Pa",
                 "temperature": lambda val: f"Temp: {val:.0f} °C",
-                "satellites": lambda val: f"Satellites: {val}"
+                "satellites": lambda val: f"Satellites: {val}",
+                "v_bat": lambda val: f"Battery: {val:.2f} V"
             },
             interval=0.2 # 200ms
         )

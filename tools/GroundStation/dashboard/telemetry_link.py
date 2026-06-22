@@ -86,10 +86,11 @@ class TelemetryLink:
             self.serial_port.rts = False
 
             # wait for boot
-            sleep(0.2)
+            sleep(0.4)
 
             # flush buffer
             self.serial_port.reset_input_buffer()
+            self.serial_port.reset_output_buffer()
 
             self.is_running = True
             self.thread = threading.Thread(target=self._loop, daemon=True)
@@ -134,7 +135,7 @@ class TelemetryLink:
 
                     for field in self.TC_PACKET_FIELDS:
                         if field == "magic":
-                            values.append(int.from_bytes(self.TC_MAGIC_BYTES, byteorder="big"))
+                            values.append(int.from_bytes(self.TC_MAGIC_BYTES, byteorder="little"))
                         elif field == "checksum":
                             values.append(0)
                         else:
@@ -164,6 +165,8 @@ class TelemetryLink:
                 if not byte: continue
 
                 sync_buffer += byte
+
+                # Logger.debug(f"Sync buffer: {sync_buffer}")
 
                 # limit sync_buffer to MAGIC size
                 if len(sync_buffer) > self.TM_MAGIC_SIZE: sync_buffer = sync_buffer[-self.TM_MAGIC_SIZE:]
