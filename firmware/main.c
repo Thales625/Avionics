@@ -6,8 +6,10 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
+#include "driver/adc.h"
 
 #include <math.h>
+#include <stdint.h>
 
 #include "math_helper.h"
 #include "flight_logic.h"
@@ -20,7 +22,7 @@
 #include "gps.h"
 #include "w25q64.h"
 
-#define BOOT_TIMEOUT 5000
+#define BOOT_TIMEOUT 3000
 
 #define SPI_MISO GPIO_NUM_22
 #define SPI_MOSI GPIO_NUM_19
@@ -38,18 +40,33 @@
 #define LORA_AUX GPIO_NUM_34
 #define LORA_UART UART_NUM_2
 #define LORA_BAUD_RATE 9600
-#define LORA_SAMPLING 20
+#define LORA_SAMPLING 5
 
 #define GPS_TX GPIO_NUM_18
 #define GPS_RX GPIO_NUM_5
 #define GPS_UART UART_NUM_1
 
-#define SDA_GPIO_PIN GPIO_NUM_14
-#define SCL_GPIO_PIN GPIO_NUM_13
+// #define SDA_GPIO_PIN GPIO_NUM_14
+// #define SCL_GPIO_PIN GPIO_NUM_13
+
+#define SDA_GPIO_PIN GPIO_NUM_16
+#define SCL_GPIO_PIN GPIO_NUM_27
+#define I2C_PORT I2C_NUM_0
+#define MAX_I2C_RECOVERIES 5
+
+#define BAT_R1 100000.0f
+#define BAT_R2 47000.0f
+#define BAT_ADC_MAX 4095.0f
+#define BAT_V_REF 3.3f
+#define BAT_MULTIPLIER (BAT_V_REF * ((BAT_R1 + BAT_R2) / BAT_R2) / BAT_ADC_MAX)
+#define BAT_SENSE_PIN GPIO_NUM_36
+#define BAT_SAMPLING 25
 
 #define PARACHUTE_PIN GPIO_NUM_4
 #define LED_PIN GPIO_NUM_2
 #define BOOT_PIN GPIO_NUM_0
+
+static const char* TAG = "avionics";
 
 static bool flash_packet_is_empty(const flash_packet_t *pkt) {
     const uint8_t *p = (const uint8_t *)pkt;
@@ -63,7 +80,11 @@ static bool flash_packet_is_empty(const flash_packet_t *pkt) {
     return true;
 }
 
-static const char* TAG = "avionics";
+static float read_battery_voltage() {
+    int raw_adc = adc1_get_raw(ADC1_CHANNEL_0);
+
+    return (float)raw_adc * BAT_MULTIPLIER;
+}
 
 static flight_logic_t flight_logic;
 
@@ -110,15 +131,22 @@ static void avionics_task(void *arg) {
     uint32_t flash_counter = 0;
     flash_payload_t flash_payload;
 
+    // i2c sensors
+    uint32_t i2c_recoveries = 0;
+
+    // battery
+    uint32_t battery_counter = 0;
+    float battery_voltage = read_battery_voltage();
+
     // init flight logic core
     flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
     if (bmp280_read_float(&bmp_dev, &flight_logic.state.temperature, &flight_logic.state.pressure) != ESP_OK) {
         ESP_LOGW(TAG, "BMP280: initial reading failed");
-        avionics_abort(6);
+        avionics_abort(8);
     }
     if (mpu6050_get_motion(&mpu_dev, &flight_logic.state.accel, &flight_logic.state.ang_vel) != ESP_OK) {
         ESP_LOGW(TAG, "MPU6050: initial reading failed");
-        avionics_abort(7);
+        avionics_abort(9);
     }
     flight_logic_init(&flight_logic);
 
@@ -133,13 +161,22 @@ static void avionics_task(void *arg) {
         // update ut
         flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
+        // i2c sensors
+        bool i2c_ok = true;
+
+        // BMP280: read data
+        if (bmp280_read_float(&bmp_dev, &flight_logic.state.temperature, &flight_logic.state.pressure) != ESP_OK) {
+            ESP_LOGW(TAG, "BMP280: read failed");
+
+            flight_logic.state.temperature = NAN;
+            flight_logic.state.pressure = NAN;
+
+            i2c_ok = false;
+        }
+
         // MPU6050: read data
         if (mpu6050_get_motion(&mpu_dev, &flight_logic.state.accel, &flight_logic.state.ang_vel) != ESP_OK) {
             ESP_LOGW(TAG, "MPU6050: read failed");
-
-            if (flight_logic.state.phase == PHASE_PRE_FLIGHT) {
-                avionics_abort(3);
-            }
 
             flight_logic.state.accel.x = NAN;
             flight_logic.state.accel.y = NAN;
@@ -148,22 +185,31 @@ static void avionics_task(void *arg) {
             flight_logic.state.ang_vel.x = NAN;
             flight_logic.state.ang_vel.y = NAN;
             flight_logic.state.ang_vel.z = NAN;
+
+            i2c_ok = false;
         }
 
-        // BMP280: read data
-        if (bmp280_read_float(&bmp_dev, &flight_logic.state.temperature, &flight_logic.state.pressure) != ESP_OK) {
-            ESP_LOGW(TAG, "BMP280: read failed");
+        if (i2c_ok) {
+            i2c_recoveries = 0;
+        } else if (flight_logic.state.phase < PHASE_ASCENT) {
+            i2c_recoveries++;
 
-            if (flight_logic.state.phase == PHASE_PRE_FLIGHT) {
-                avionics_abort(3);
-            }
+            ESP_LOGW(TAG, "Recovering I2C bus (%d/%d)", i2c_recoveries, MAX_I2C_RECOVERIES);
 
-            flight_logic.state.temperature = NAN;
-            flight_logic.state.pressure = NAN;
+            i2cdev_bus_recover(I2C_PORT);
+            vTaskDelay(pdMS_TO_TICKS(50));
         }
 
         // GPS: read data
         gps_read(&gps_dev, &flight_logic.state.lat_nmea, &flight_logic.state.lon_nmea, &flight_logic.state.satellites);
+
+        // BAT: read voltage
+        if (battery_counter++ >= BAT_SAMPLING) {
+            battery_counter = 0;
+            float current_vbat = read_battery_voltage();
+
+            battery_voltage = (0.8f * battery_voltage) + (0.2f * current_vbat);
+        }
 
         // consume telecommand
         {
@@ -202,7 +248,7 @@ static void avionics_task(void *arg) {
         gpio_set_level(PARACHUTE_PIN, flight_logic.trigger_parachute);
 
         // log values
-        ESP_LOGI(TAG, "phase: %d, altitude: %.6f, pressure: %.2f, |accel|: %.2f, sats: %d, lat: %d, lon: %d", flight_logic.state.phase, flight_logic.altitude_baro, flight_logic.state.pressure, sqrtf(flight_logic.state.accel.x*flight_logic.state.accel.x + flight_logic.state.accel.y*flight_logic.state.accel.y + flight_logic.state.accel.z*flight_logic.state.accel.z), flight_logic.state.satellites, flight_logic.state.lat_nmea, flight_logic.state.lon_nmea);
+        ESP_LOGI(TAG, "phase: %d, v_bat: %.2f, altitude: %.6f, pressure: %.2f, |accel|: %.2f, sats: %d, lat: %d, lon: %d", flight_logic.state.phase, battery_voltage, flight_logic.altitude_baro, flight_logic.state.pressure, sqrtf(flight_logic.state.accel.x*flight_logic.state.accel.x + flight_logic.state.accel.y*flight_logic.state.accel.y + flight_logic.state.accel.z*flight_logic.state.accel.z), flight_logic.state.satellites, flight_logic.state.lat_nmea, flight_logic.state.lon_nmea);
 
         // send data to telemetry
         {
@@ -218,13 +264,13 @@ static void avionics_task(void *arg) {
                 tm_payload.lat_nmea = flight_logic.state.lat_nmea;
                 tm_payload.lon_nmea = flight_logic.state.lon_nmea;
                 tm_payload.satellites = flight_logic.state.satellites;
+                tm_payload.v_bat = battery_voltage;
                 tm_payload.phase = (uint8_t) flight_logic.state.phase;
 
-                if (xQueueSend(lora_queue, &tm_payload, 0) != pdTRUE) {
-                    ESP_LOGW(TAG, "skip sample: lora queue is full!");
-                }
+                xQueueOverwrite(lora_queue, &tm_payload);
             }
 
+            // send data to flash
             if (flight_logic.state.phase >= PHASE_PRE_FLIGHT) {
                 if (flash_counter++ >= FLASH_SAMPLING) {
                     flash_counter = 0;
@@ -237,10 +283,14 @@ static void avionics_task(void *arg) {
                     flash_payload.lat_nmea = flight_logic.state.lat_nmea;
                     flash_payload.lon_nmea = flight_logic.state.lon_nmea;
                     flash_payload.satellites = flight_logic.state.satellites;
+                    flash_payload.v_bat = battery_voltage;
                     flash_payload.phase = (uint8_t) flight_logic.state.phase;
 
                     if (xQueueSend(flash_queue, &flash_payload, 0) != pdTRUE) {
-                        ESP_LOGW(TAG, "skip sample: flash queue is full!");
+                        flash_payload_t discarded;
+                        xQueueReceive(flash_queue, &discarded, 0);
+                        xQueueSend(flash_queue, &flash_payload, 0);
+                        ESP_LOGW(TAG, "discard old flash sample: flash queue is full!");
                     }
                 }
             }
@@ -301,43 +351,51 @@ static void lora_task(void *arg) {
     packet.magic = TELEMETRY_MAGIC;
 
     // telecommand
-    telecommand_payload_t telecommand;
-    uint32_t tc_magic = 0;
-    uint16_t tc_checksum = 0;
-    uint8_t tc_byte;
+    // telecommand_payload_t telecommand;
+    // uint32_t tc_magic = 0;
+    // uint16_t tc_checksum = 0;
+    // uint8_t tc_byte;
 
     while (1) {
-        // transmit telemetry
-        if (xQueueReceive(lora_queue, &payload, 0) == pdTRUE) {
-            packet.payload = payload;
-            packet.checksum = crc16((const uint8_t*)&payload, sizeof(lora_payload_t));
-
-            // wait if lora is busy
-            while (gpio_get_level(lora_dev.aux_pin) == 0) {
-                vTaskDelay(pdMS_TO_TICKS(10));
+        /* IGNORE FOR NOW
+        // receive telecommand
+        for (uint32_t tc_reads=0; tc_reads<32; tc_reads++) {
+            if (lora_receive_bytes(&lora_dev, &tc_byte, 1, 0) <= 0) {
+                break;
             }
 
-            lora_send_bytes(&lora_dev, (uint8_t *)&packet, sizeof(packet));
-        }
-
-        // receive telecommand
-        while (lora_receive_bytes(&lora_dev, &tc_byte, 1, 0) == 1) {
-            tc_magic = (tc_magic << 8) | tc_byte;
+            tc_magic = (tc_magic >> 8) | ((uint32_t)tc_byte << 24); // little-endian
+            // tc_magic = (tc_magic << 8) | tc_byte;
 
             if (tc_magic == TELECOMMAND_MAGIC) {
-                int payload_len = uart_read_bytes(lora_dev.uart_num, (uint8_t *)&telecommand, sizeof(telecommand_payload_t), pdMS_TO_TICKS(100));
+                int payload_len = lora_receive_bytes(&lora_dev, (uint8_t *)&telecommand, sizeof(telecommand_payload_t), pdMS_TO_TICKS(100));
                 if (payload_len == sizeof(telecommand_payload_t)) {
-                    int checksum_len = uart_read_bytes(lora_dev.uart_num, (uint8_t *)&tc_checksum, sizeof(tc_checksum), pdMS_TO_TICKS(50));
+                    int checksum_len = lora_receive_bytes(&lora_dev, (uint8_t *)&tc_checksum, sizeof(tc_checksum), pdMS_TO_TICKS(50));
                     if (checksum_len == sizeof(tc_checksum)) {
                         if (tc_checksum == crc16((const uint8_t*)&telecommand, sizeof(telecommand_payload_t))) {
                             if (xQueueSend(telecommand_queue, &telecommand, 0) != pdTRUE) {
-                                // ESP_LOGW(TAG, "skip tc: queue full!");
+                                telecommand_payload_t discarded;
+                                xQueueReceive(telecommand_queue, &discarded, 0);
+                                xQueueSend(telecommand_queue, &telecommand, 0);
+                                ESP_LOGW(TAG, "discard old tc sample: telecommand queue is full!");
                             }
                         }
                     }
                 }
 
                 tc_magic = 0;
+                break;
+            }
+        }
+        */
+
+        // transmit telemetry
+        if (xQueueReceive(lora_queue, &payload, 0) == pdTRUE) {
+            packet.payload = payload;
+            packet.checksum = crc16((const uint8_t*)&payload, sizeof(lora_payload_t));
+
+            if (lora_send_bytes(&lora_dev, (uint8_t *)&packet, sizeof(packet)) == -1) {
+                ESP_LOGE(TAG, "LORA send failed");
             }
         }
 
@@ -393,13 +451,14 @@ static void read_telemetry(void *arg) {
 void app_main(void) {
     // create xQueue
     flash_queue = xQueueCreate(32, sizeof(flash_payload_t));
-    lora_queue = xQueueCreate(16, sizeof(lora_payload_t));
-    telecommand_queue = xQueueCreate(16, sizeof(telecommand_packet_t));
+    lora_queue = xQueueCreate(1, sizeof(lora_payload_t)); // mailbox
+    telecommand_queue = xQueueCreate(8, sizeof(telecommand_payload_t));
 
-    // BOOT BUTTON configuration
+    // GPIO IN configuration
     {
         gpio_config_t in_conf = {
-            .pin_bit_mask = (1ULL << BOOT_PIN),
+            .pin_bit_mask = (1ULL << BOOT_PIN) |
+                            (1ULL << BAT_SENSE_PIN),
             .mode = GPIO_MODE_INPUT,
             .pull_up_en = GPIO_PULLUP_DISABLE,
             .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -407,13 +466,18 @@ void app_main(void) {
         };
 
         if(gpio_config(&in_conf) != ESP_OK) {
-            ESP_LOGE(TAG, "BOOT BUTTON failed to init");
+            ESP_LOGE(TAG, "GPIO IN config failed");
             avionics_abort(1);
         }
-        ESP_LOGI(TAG, "BOOT BUTTON initialized");
+
+        // ADC configuration
+        if(adc1_config_width(ADC_WIDTH_BIT_12) != ESP_OK || adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_12) != ESP_OK) {
+            ESP_LOGE(TAG, "ADC config failed");
+            avionics_abort(1);
+        }
     }
 
-    // GPIO configuration
+    // GPIO OUT configuration
     {
         gpio_config_t out_conf = {
             .pin_bit_mask = (1ULL << PARACHUTE_PIN) |
@@ -425,10 +489,9 @@ void app_main(void) {
         };
 
         if(gpio_config(&out_conf) != ESP_OK) {
-            ESP_LOGE(TAG, "GPIO failed to init");
+            ESP_LOGE(TAG, "GPIO OUT config failed");
             avionics_abort(1);
         }
-        ESP_LOGI(TAG, "GPIO initialized");
 
         // set default values
         gpio_set_level(PARACHUTE_PIN, 0);
@@ -486,6 +549,55 @@ void app_main(void) {
             avionics_abort(3);
         }
         ESP_LOGI(TAG, "I2C initialized");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    // BMP280 initialization
+    {
+        bmp280_params_t params;
+        params.mode = BMP280_MODE_NORMAL;
+        params.filter = BMP280_FILTER_2;
+        params.oversampling_pressure = BMP280_STANDARD;
+        params.oversampling_temperature = BMP280_ULTRA_LOW_POWER;
+        params.standby = BMP280_STANDBY_05;
+
+        bmp280_init_desc(
+            &bmp_dev,
+            BMP280_I2C_ADDRESS_0,
+            I2C_PORT,
+            SDA_GPIO_PIN,
+            SCL_GPIO_PIN
+        );
+        vTaskDelay(pdMS_TO_TICKS(200));
+        if (bmp280_init(&bmp_dev, &params) != ESP_OK) {
+            ESP_LOGE(TAG, "BMP280 failed to init");
+            avionics_abort(4);
+        }
+        ESP_LOGI(TAG, "BMP280 initialized");
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    // MPU6050 initialization
+    {
+        mpu6050_init_desc(
+            &mpu_dev,
+            MPU6050_I2C_ADDRESS_LOW,
+            I2C_PORT,
+            SDA_GPIO_PIN,
+            SCL_GPIO_PIN
+        );
+        vTaskDelay(pdMS_TO_TICKS(200));
+        if (mpu6050_init(&mpu_dev)) {
+            ESP_LOGE(TAG, "MPU6050 failed to init");
+            avionics_abort(5);
+        }
+
+        if (mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_250) || mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_8) || mpu6050_set_dlpf_mode(&mpu_dev, MPU6050_DLPF_3)) {
+            ESP_LOGE(TAG, "MPU6050 failed to set range/dlpf");
+            avionics_abort(5);
+        }
+
+        ESP_LOGI(TAG, "MPU6050 initialized");
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
@@ -501,64 +613,29 @@ void app_main(void) {
         lora_dev.channel = TMTC_CHANNEL;
         if (lora_init(&lora_dev) != ESP_OK) {
             ESP_LOGE(TAG, "LoRa failed to init");
-            avionics_abort(4);
+            avionics_abort(6);
         }
+        lora_set_rssi(&lora_dev, false);
         lora_set_channel(&lora_dev, TMTC_CHANNEL);
         // lora_set_power(&lora_dev, LORA_POWER_22_DBM);
         // lora_set_power(&lora_dev, LORA_POWER_17_DBM);
         lora_set_power(&lora_dev, LORA_POWER_13_DBM);
         lora_set_air_data_rate(&lora_dev, TMTC_AIR_DATA_RATE);
+        if (uart_flush(lora_dev.uart_num) != ESP_OK) {
+            ESP_LOGE(TAG, "LoRa uart failed to flush");
+            avionics_abort(6);
+        }
         ESP_LOGI(TAG, "LoRa initialized");
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 
     // GPS initialization
     {
         if(gps_init_desc(&gps_dev, GPS_TX, GPS_RX, GPS_UART) != ESP_OK) {
             ESP_LOGE(TAG, "GPS failed to init");
-            avionics_abort(5);
+            avionics_abort(7);
         };
         ESP_LOGI(TAG, "GPS initialized");
-    }
-
-    // BMP280 initialization
-    {
-        bmp280_params_t params;
-        params.mode = BMP280_MODE_NORMAL;
-        params.filter = BMP280_FILTER_2;
-        params.oversampling_pressure = BMP280_STANDARD;
-        params.oversampling_temperature = BMP280_ULTRA_LOW_POWER;
-        params.standby = BMP280_STANDBY_05;
-
-        bmp280_init_desc(
-            &bmp_dev,
-            BMP280_I2C_ADDRESS_0,
-            I2C_NUM_0,
-            SDA_GPIO_PIN,
-            SCL_GPIO_PIN
-        );
-        vTaskDelay(pdMS_TO_TICKS(200));
-        if (bmp280_init(&bmp_dev, &params) != ESP_OK) {
-            ESP_LOGE(TAG, "BMP280 failed to init");
-            avionics_abort(6);
-        }
-        ESP_LOGI(TAG, "BMP280 initialized");
-    }
-
-    // MPU6050 initialization
-    {
-        mpu6050_init_desc(
-            &mpu_dev,
-            MPU6050_I2C_ADDRESS_LOW,
-            I2C_NUM_0,
-            SDA_GPIO_PIN,
-            SCL_GPIO_PIN
-        );
-        vTaskDelay(pdMS_TO_TICKS(200));
-        if (mpu6050_init(&mpu_dev) || mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_250) || mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_8) || mpu6050_set_dlpf_mode(&mpu_dev, MPU6050_DLPF_3)) {
-            ESP_LOGE(TAG, "MPU6050 failed to init");
-            avionics_abort(7);
-        }
-        ESP_LOGI(TAG, "MPU6050 initialized");
     }
 
     // create tasks
