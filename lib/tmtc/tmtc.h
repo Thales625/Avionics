@@ -39,6 +39,8 @@ typedef struct __attribute__((packed)) {
     int32_t lat_nmea, lon_nmea;
     uint8_t satellites;
 
+    float v_bat;
+
     uint8_t phase;
 } lora_payload_t;
 
@@ -61,6 +63,8 @@ typedef struct __attribute__((packed)) {
 
     int32_t lat_nmea, lon_nmea;
     uint8_t satellites;
+
+    float v_bat;
 
     uint8_t phase;
 } flash_payload_t;
