@@ -35,7 +35,7 @@ esp_err_t lora_set_rssi(lora_dev_t *dev, bool enable);
 esp_err_t lora_set_air_data_rate(lora_dev_t *dev, lora_air_data_rate_t rate);
 esp_err_t lora_set_power(lora_dev_t *dev, lora_power_t power);
 
-void lora_send_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size);
+int lora_send_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size);
 int lora_receive_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size, TickType_t timeout);
 
 #endif

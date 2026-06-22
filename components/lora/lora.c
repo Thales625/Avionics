@@ -1,12 +1,23 @@
-#include "esp_err.h"
+#include "freertos/FreeRTOS.h" // IWYU pragma: keep
+#include "freertos/task.h"
 #include "driver/gpio.h"
+#include "driver/uart.h"
+#include "esp_err.h"
 
 #include "lora.h"
 
-static inline void lora_wait_aux(lora_dev_t *dev) {
+bool lora_wait_aux(lora_dev_t *dev, TickType_t timeout) {
+    TickType_t start = xTaskGetTickCount();
+
     while (gpio_get_level(dev->aux_pin) == 0) {
+        if ((xTaskGetTickCount() - start) > timeout) {
+            return false;
+        }
+
         vTaskDelay(pdMS_TO_TICKS(1));
     }
+
+    return true;
 }
 
 esp_err_t lora_init(lora_dev_t *dev) {
@@ -23,11 +34,8 @@ esp_err_t lora_init(lora_dev_t *dev) {
 
     esp_err_t err;
 
-    // buffer RX = 256 bytes | buffer TX = 512 bytes
-    // ESP_ERROR_CHECK(uart_driver_install(dev->uart_num, 256, 512, 0, NULL, 0));
-
-    // buffer RX = 256 bytes | buffer TX = 0 bytes
-    err = uart_driver_install(dev->uart_num, 256, 0, 0, NULL, 0);
+    // buffer RX = 256 bytes | buffer TX = 256 bytes
+    err = uart_driver_install(dev->uart_num, 256, 256, 0, NULL, 0);
     if (err != ESP_OK) return err;
     err = uart_param_config(dev->uart_num, &uart_config);
     if (err != ESP_OK) return err;
@@ -42,8 +50,11 @@ esp_err_t lora_init(lora_dev_t *dev) {
     gpio_set_level(dev->m0_pin, 0);
     gpio_set_level(dev->m1_pin, 0);
 
-    vTaskDelay(pdMS_TO_TICKS(100));
-    lora_wait_aux(dev);
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) {
+        return ESP_FAIL;
+    };
 
     return ESP_OK;
 }
@@ -56,25 +67,25 @@ esp_err_t lora_set_channel(lora_dev_t *dev, uint8_t channel) {
     gpio_set_level(dev->m1_pin, 1);
 
     vTaskDelay(pdMS_TO_TICKS(100));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     // clear uart buffer
     uart_flush_input(dev->uart_num);
 
     // channel reg (0x04)
-    uint8_t write_cmd[4] = {0xC0, 0x04, 0x01, channel};
+    uint8_t write_cmd[4] = {0xC2, 0x04, 0x01, channel};
     uart_write_bytes(dev->uart_num, (const uint8_t *)write_cmd, 4);
     uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
 
     vTaskDelay(pdMS_TO_TICKS(50));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     // normal mode
     gpio_set_level(dev->m0_pin, 0);
     gpio_set_level(dev->m1_pin, 0);
 
     vTaskDelay(pdMS_TO_TICKS(100));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     return ESP_OK;
 }
@@ -87,7 +98,7 @@ esp_err_t lora_set_rssi(lora_dev_t *dev, bool enable) {
     gpio_set_level(dev->m1_pin, 1);
 
     vTaskDelay(pdMS_TO_TICKS(100));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     // clear uart buffer
     uart_flush_input(dev->uart_num);
@@ -98,7 +109,7 @@ esp_err_t lora_set_rssi(lora_dev_t *dev, bool enable) {
     uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
 
     vTaskDelay(pdMS_TO_TICKS(50));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     // read response
     uint8_t response[4] = { 0 };
@@ -109,7 +120,7 @@ esp_err_t lora_set_rssi(lora_dev_t *dev, bool enable) {
         gpio_set_level(dev->m0_pin, 0);
         gpio_set_level(dev->m1_pin, 0);
         vTaskDelay(pdMS_TO_TICKS(100));
-        lora_wait_aux(dev);
+        if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
         return ESP_FAIL;
     }
 
@@ -121,19 +132,19 @@ esp_err_t lora_set_rssi(lora_dev_t *dev, bool enable) {
     }
 
     // write new value
-    uint8_t write_cmd[4] = {0xC0, 0x05, 0x01, reg3_val};
+    uint8_t write_cmd[4] = {0xC2, 0x05, 0x01, reg3_val};
     uart_write_bytes(dev->uart_num, (const uint8_t *)write_cmd, 4);
     uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
 
     vTaskDelay(pdMS_TO_TICKS(50));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     // normal mode
     gpio_set_level(dev->m0_pin, 0);
     gpio_set_level(dev->m1_pin, 0);
 
     vTaskDelay(pdMS_TO_TICKS(100));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     return ESP_OK;
 }
@@ -146,7 +157,7 @@ esp_err_t lora_set_air_data_rate(lora_dev_t *dev, lora_air_data_rate_t rate) {
     gpio_set_level(dev->m1_pin, 1);
 
     vTaskDelay(pdMS_TO_TICKS(100));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     // clear uart buffer
     uart_flush_input(dev->uart_num);
@@ -157,7 +168,7 @@ esp_err_t lora_set_air_data_rate(lora_dev_t *dev, lora_air_data_rate_t rate) {
     uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
 
     vTaskDelay(pdMS_TO_TICKS(50));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     // read response (header + address + length + value)
     uint8_t response[4] = {0};
@@ -168,7 +179,7 @@ esp_err_t lora_set_air_data_rate(lora_dev_t *dev, lora_air_data_rate_t rate) {
         gpio_set_level(dev->m0_pin, 0);
         gpio_set_level(dev->m1_pin, 0);
         vTaskDelay(pdMS_TO_TICKS(100));
-        lora_wait_aux(dev);
+        if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
         return ESP_FAIL;
     }
 
@@ -181,19 +192,19 @@ esp_err_t lora_set_air_data_rate(lora_dev_t *dev, lora_air_data_rate_t rate) {
     reg0_val |= (rate & 0x07);
 
     // write REG0
-    uint8_t write_cmd[4] = {0xC0, 0x02, 0x01, reg0_val};
+    uint8_t write_cmd[4] = {0xC2, 0x02, 0x01, reg0_val};
     uart_write_bytes(dev->uart_num, (const uint8_t *)write_cmd, 4);
     uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
 
     vTaskDelay(pdMS_TO_TICKS(50));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     // normal mode
     gpio_set_level(dev->m0_pin, 0);
     gpio_set_level(dev->m1_pin, 0);
 
     vTaskDelay(pdMS_TO_TICKS(100));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     return ESP_OK;
 }
@@ -206,7 +217,7 @@ esp_err_t lora_set_power(lora_dev_t *dev, lora_power_t power) {
     gpio_set_level(dev->m1_pin, 1);
 
     vTaskDelay(pdMS_TO_TICKS(100));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     // clear uart buffer
     uart_flush_input(dev->uart_num);
@@ -217,7 +228,7 @@ esp_err_t lora_set_power(lora_dev_t *dev, lora_power_t power) {
     uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
 
     vTaskDelay(pdMS_TO_TICKS(50));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     // read response
     uint8_t response[4] = {0};
@@ -229,7 +240,7 @@ esp_err_t lora_set_power(lora_dev_t *dev, lora_power_t power) {
         gpio_set_level(dev->m0_pin, 0);
         gpio_set_level(dev->m1_pin, 0);
         vTaskDelay(pdMS_TO_TICKS(100));
-        lora_wait_aux(dev);
+        if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
         return ESP_FAIL;
     }
 
@@ -242,47 +253,44 @@ esp_err_t lora_set_power(lora_dev_t *dev, lora_power_t power) {
     reg1_val |= (power & 0x03);
 
     // write REG1 (0x03)
-    uint8_t write_cmd[4] = {0xC0, 0x03, 0x01, reg1_val};
+    uint8_t write_cmd[4] = {0xC2, 0x03, 0x01, reg1_val};
     uart_write_bytes(dev->uart_num, (const uint8_t *)write_cmd, 4);
     uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
 
     vTaskDelay(pdMS_TO_TICKS(50));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     // normal mode
     gpio_set_level(dev->m0_pin, 0);
     gpio_set_level(dev->m1_pin, 0);
 
     vTaskDelay(pdMS_TO_TICKS(100));
-    lora_wait_aux(dev);
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
 
     return ESP_OK;
 }
 
 
-void lora_send_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size) {
-    if (dev == NULL) return;
+int lora_send_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size) {
+    if (dev == NULL) return 0;
 
-    // LoRa is busy
-    // if (gpio_get_level(dev->aux_pin) == 0) return;
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) { // lora aux timeout
+        return -1;
+    }
 
-    // wait for LoRa to be ready
-    lora_wait_aux(dev);
+    int written = uart_write_bytes(dev->uart_num, bytes, size);
 
-    uart_write_bytes(dev->uart_num, (const uint8_t *)bytes, size);
+    uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(500));
+
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(2000))) {
+        return -1;
+    }
+
+    return written;
 }
 
 int lora_receive_bytes(lora_dev_t *dev, uint8_t *bytes, size_t size, TickType_t timeout) {
     if (dev == NULL) return -1;
 
-    size_t available_bytes = 0;
-    if (uart_get_buffered_data_len(dev->uart_num, &available_bytes) != ESP_OK) {
-        return -1;
-    }
-
-    if (available_bytes > 0) {
-        return uart_read_bytes(dev->uart_num, bytes, available_bytes > size ? size : available_bytes, timeout);
-    }
-
-    return 0;
+    return uart_read_bytes(dev->uart_num, bytes, size, timeout);
 }
