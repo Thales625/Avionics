@@ -215,6 +215,8 @@ esp_err_t i2c_dev_read_reg(const i2c_dev_t *dev, uint8_t reg,
 esp_err_t i2c_dev_write_reg(const i2c_dev_t *dev, uint8_t reg,
         const void *out_data, size_t out_size);
 
+esp_err_t i2cdev_bus_recover(i2c_port_t port);
+
 #define I2C_DEV_TAKE_MUTEX(dev) do { \
         esp_err_t __ = i2c_dev_take_mutex(dev); \
         if (__ != ESP_OK) return __;\

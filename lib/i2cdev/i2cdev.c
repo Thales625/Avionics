@@ -180,7 +180,7 @@ inline static bool cfg_equal(const i2c_config_t *a, const i2c_config_t *b)
 #if HELPER_TARGET_IS_ESP32
         && a->master.clk_speed == b->master.clk_speed
 #elif HELPER_TARGET_IS_ESP8266
-        && ((a->clk_stretch_tick && a->clk_stretch_tick == b->clk_stretch_tick) 
+        && ((a->clk_stretch_tick && a->clk_stretch_tick == b->clk_stretch_tick)
             || (!a->clk_stretch_tick && b->clk_stretch_tick == I2CDEV_MAX_STRETCH_TIME)
         ) // see line 232
 #endif
@@ -337,4 +337,97 @@ esp_err_t i2c_dev_read_reg(const i2c_dev_t *dev, uint8_t reg, void *in_data, siz
 esp_err_t i2c_dev_write_reg(const i2c_dev_t *dev, uint8_t reg, const void *out_data, size_t out_size)
 {
     return i2c_dev_write(dev, &reg, 1, out_data, out_size);
+}
+
+esp_err_t i2cdev_bus_recover(i2c_port_t port)
+{
+    if (port >= I2C_NUM_MAX) return ESP_ERR_INVALID_ARG;
+
+    gpio_num_t sda_pin = states[port].config.sda_io_num;
+    gpio_num_t scl_pin = states[port].config.scl_io_num;
+
+    if (sda_pin < 0 || scl_pin < 0) return ESP_ERR_INVALID_STATE;
+
+    SEMAPHORE_TAKE(port);
+
+    ESP_LOGW(TAG, "Recovering I2C bus %d (SDA=%d, SCL=%d)", port, sda_pin, scl_pin);
+
+    // Remove driver if installed
+    if (states[port].installed)
+    {
+        i2c_driver_delete(port);
+        states[port].installed = false;
+    }
+
+    // Configure pins as open-drain with pull-up
+    gpio_config_t io_conf = {
+        .intr_type = GPIO_INTR_DISABLE,
+        .mode = GPIO_MODE_INPUT_OUTPUT_OD,
+        .pin_bit_mask = (1ULL << sda_pin) | (1ULL << scl_pin),
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+    };
+
+    gpio_config(&io_conf);
+
+    // Release lines
+    gpio_set_level(sda_pin, 1);
+    gpio_set_level(scl_pin, 1);
+    esp_rom_delay_us(20);
+
+    // If bus is already free, nothing to do
+    if (gpio_get_level(sda_pin) &&
+        gpio_get_level(scl_pin))
+    {
+        ESP_LOGI(TAG, "I2C bus already free");
+
+        gpio_reset_pin(sda_pin);
+        gpio_reset_pin(scl_pin);
+
+        SEMAPHORE_GIVE(port);
+        return ESP_OK;
+    }
+
+    // Generate up to 9 clock pulses
+    for (int i = 0; i < 9; i++)
+    {
+        // If SDA released, bus recovered
+        if (gpio_get_level(sda_pin))
+        {
+            ESP_LOGI(TAG, "SDA released after %d clock pulses", i);
+            break;
+        }
+
+        gpio_set_level(scl_pin, 0);
+        esp_rom_delay_us(10);
+
+        gpio_set_level(scl_pin, 1);
+        esp_rom_delay_us(10);
+    }
+
+    // Generate STOP condition
+    gpio_set_level(sda_pin, 0);
+    esp_rom_delay_us(10);
+
+    gpio_set_level(scl_pin, 1);
+    esp_rom_delay_us(10);
+
+    gpio_set_level(sda_pin, 1);
+    esp_rom_delay_us(20);
+
+    bool success = gpio_get_level(sda_pin) && gpio_get_level(scl_pin);
+
+    gpio_reset_pin(sda_pin);
+    gpio_reset_pin(scl_pin);
+
+    SEMAPHORE_GIVE(port);
+
+    if (success)
+    {
+        ESP_LOGI(TAG, "I2C bus recovery successful");
+        return ESP_OK;
+    }
+
+    ESP_LOGE(TAG, "I2C bus recovery failed");
+    return ESP_FAIL;
 }
