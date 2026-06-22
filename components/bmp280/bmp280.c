@@ -40,7 +40,8 @@
 #include <esp_log.h>
 #include <esp_idf_lib_helpers.h>
 
-#define I2C_FREQ_HZ 1000000 // Max 1MHz for esp-idf
+// #define I2C_FREQ_HZ 1000000 // Max 1MHz for esp-idf
+#define I2C_FREQ_HZ (400000) // 400kHz
 
 static const char *TAG = "bmp280";
 
@@ -162,6 +163,8 @@ esp_err_t bmp280_init_desc(bmp280_t *dev, uint8_t addr, i2c_port_t port, gpio_nu
     dev->i2c_dev.addr = addr;
     dev->i2c_dev.cfg.sda_io_num = sda_gpio;
     dev->i2c_dev.cfg.scl_io_num = scl_gpio;
+    dev->i2c_dev.cfg.sda_pullup_en = GPIO_PULLUP_ENABLE;
+    dev->i2c_dev.cfg.scl_pullup_en = GPIO_PULLUP_ENABLE;
 #if HELPER_TARGET_IS_ESP32
     dev->i2c_dev.cfg.master.clk_speed = I2C_FREQ_HZ;
 #endif
