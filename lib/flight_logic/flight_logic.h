@@ -48,6 +48,7 @@ typedef struct {
 typedef struct {
     flight_state_t state;
 
+    uint32_t ut_0;
     float pressure_0;
 
     float altitude_baro;

@@ -18,13 +18,10 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdarg.h>
-
 static sim_log_callback_t sim_log_cb = NULL;
-
 void flight_logic_set_sim_logger(sim_log_callback_t cb) {
     sim_log_cb = cb;
 }
-
 void sim_log_internal(const char *fmt, ...) {
     if (!sim_log_cb) return;
 
@@ -45,6 +42,7 @@ static const char* TAG = "flight_logic";
 void flight_logic_init(flight_logic_t *core) {
     core->state.phase = PHASE_WAITING;
 
+    core->ut_0 = core->state.ut;
     core->pressure_0 = core->state.pressure;
 
     core->altitude_baro = 0.0f;
