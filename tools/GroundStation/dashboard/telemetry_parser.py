@@ -15,7 +15,7 @@ def parse_telecommand_header(filepath):
     magic_str = _get_define(header.defines, "TELECOMMAND_MAGIC")
     if magic_str is None:
         raise ValueError("TELECOMMAND_MAGIC not found in defines")
-    magic_val = int(magic_str, 16)
+    magic_val = int(magic_str.split("//")[0], 16)
 
     # get payload struct
     payload_struct_data = header.classes.get("telecommand_payload_t")
@@ -78,7 +78,7 @@ def parse_telemetry_header(filepath):
     magic_str = _get_define(header.defines, "TELEMETRY_MAGIC")
     if magic_str is None:
         raise ValueError("TELEMETRY_MAGIC not found in defines")
-    magic_val = int(magic_str, 16)
+    magic_val = int(magic_str.split("//")[0], 16)
 
     # get payload struct
     payload_struct_data = header.classes.get("lora_payload_t")
