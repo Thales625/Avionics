@@ -86,8 +86,31 @@ static void parse_gpgga(int32_t *lat, int32_t *lon, uint8_t *satellites, const c
             *lon = parse_nmea_coord(lon_str);
             if (*ew_str == 'W') *lon = -*lon;
         }
-    } else {
-        *satellites = 0;
+    }
+}
+
+static void parse_gprmc(uint32_t *utc_time, uint32_t *utc_date, const char *line) {
+    const char *p = line;
+
+    p = nmea_next_field(p); // skip [0]: msg ID
+
+    const char *time_str = p; // [1]: UTC (HHMMSS.ss)
+    p = nmea_next_field(p);
+    p = nmea_next_field(p); // skip [2]: status (A = active, V = invalid)
+    p = nmea_next_field(p); // [3]: latitude
+    p = nmea_next_field(p); // [4]: (n/s)
+    p = nmea_next_field(p); // [5]: longitude
+    p = nmea_next_field(p); // [6]: (e/w)
+    p = nmea_next_field(p); // [7]: velocity
+    p = nmea_next_field(p); // [8]: course
+    const char *date_str = p; // [9]: date (DDMMYY)
+
+    if (utc_time && *time_str != ',' && *time_str != '*') {
+        *utc_time = (uint32_t)strtoul(time_str, NULL, 10);
+    }
+
+    if (utc_date && *date_str != ',' && *date_str != '*') {
+        *utc_date = (uint32_t)strtoul(date_str, NULL, 10);
     }
 }
 
@@ -116,60 +139,7 @@ esp_err_t gps_init_desc(gps_dev_t *dev, gpio_num_t tx, gpio_num_t rx, uart_port_
     return ESP_OK;
 }
 
-esp_err_t gps_update(gps_dev_t *dev) {
-    int len;
-
-    while (1) {
-        len = uart_read_bytes(dev->uart_num, dev->uart_buffer, sizeof(dev->uart_buffer), 0);
-
-        if (len <= 0) break;
-
-        for (int i = 0; i < len; i++) {
-            uint8_t byte = dev->uart_buffer[i];
-
-            if (byte == '\r') {
-                continue; // ignore
-            } else if (byte == '\n') {
-                // EOL
-                gps_line[gps_idx] = '\0';
-
-                #ifdef ENABLE_LOG
-                ESP_LOGI(TAG, "raw: %s", gps_line);
-                #endif
-
-                // validate packet
-                if (gps_check_checksum(gps_line)) {
-                    if (strncmp(gps_line, "$GPGGA", 6) == 0 || strncmp(gps_line, "$GNGGA", 6) == 0) {
-                        // parse_gpgga(dev, gps_line);
-
-                        #ifdef ENABLE_LOG
-                        ESP_LOGI(TAG, "Lock=%d, Sats=%lu, Lat=%.6f, Lon=%.6f", dev->locked, dev->sattelites, dev->lat, dev->lon);
-                        #endif
-                    }
-                } else {
-                    #ifdef ENABLE_LOG
-                    ESP_LOGW(TAG, "Checksum error, NMEA ignored");
-                    #endif
-                }
-
-                gps_idx = 0;
-            } else if (gps_idx < sizeof(gps_line) - 1) {
-                gps_line[gps_idx++] = byte;
-            } else {
-                // FAILSAFE: buffer full and didn't find EOL.
-                gps_line[gps_idx] = '\0';
-                #ifdef ENABLE_LOG
-                ESP_LOGW(TAG, "BUFFER FULL (wrong Baud rate?): %s", gps_line);
-                #endif
-                gps_idx = 0;
-            }
-        }
-    }
-
-    return ESP_OK;
-}
-
-esp_err_t gps_read(gps_dev_t *dev, int32_t *lat, int32_t *lon, uint8_t *satellites) {
+esp_err_t gps_read(gps_dev_t *dev, int32_t *lat, int32_t *lon, uint8_t *satellites, uint32_t *utc_time, uint32_t *utc_date) {
     uint8_t data[128];
     int len;
 
@@ -199,6 +169,9 @@ esp_err_t gps_read(gps_dev_t *dev, int32_t *lat, int32_t *lon, uint8_t *satellit
                         #ifdef ENABLE_LOG
                         ESP_LOGI(TAG, "Lock=%d, Sats=%lu, Lat=%.6f, Lon=%.6f", dev->locked, dev->sattelites, dev->lat, dev->lon);
                         #endif
+                    }
+                    else if (strncmp(gps_line, "$GPRMC", 6) == 0 || strncmp(gps_line, "$GNRMC", 6) == 0) {
+                        parse_gprmc(utc_time, utc_date, gps_line);
                     }
                 } else {
                     #ifdef ENABLE_LOG

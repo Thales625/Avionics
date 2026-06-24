@@ -14,7 +14,6 @@ typedef struct {
 } gps_dev_t;
 
 esp_err_t gps_init_desc(gps_dev_t *dev, gpio_num_t tx, gpio_num_t rx, uart_port_t uart_num);
-esp_err_t gps_update(gps_dev_t *dev);
-esp_err_t gps_read(gps_dev_t *dev, int32_t *lat, int32_t *lon, uint8_t *satellites);
+esp_err_t gps_read(gps_dev_t *dev, int32_t *lat, int32_t *lon, uint8_t *satellites, uint32_t *utc_time, uint32_t *utc_date);
 
 #endif
