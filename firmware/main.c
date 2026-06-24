@@ -6,15 +6,16 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
-#include "driver/adc.h"
+#include "esp_adc/adc_oneshot.h"
+#include "portmacro.h"
 
 #include <math.h>
 #include <stdint.h>
 
-#include "math_helper.h"
 #include "flight_logic.h"
-#include "portmacro.h"
+#include "flash_log.h"
 #include "tmtc.h"
+#include "crc.h"
 
 #include "mpu6050.h"
 #include "bmp280.h"
@@ -28,9 +29,6 @@
 #define SPI_MOSI GPIO_NUM_19
 #define SPI_CLK GPIO_NUM_21
 #define W25Q_CS GPIO_NUM_23
-#define FLASH_PAGE_SIZE 256
-#define PACKETS_PER_PAGE (FLASH_PAGE_SIZE / sizeof(flash_packet_t))
-#define BYTES_PER_PAGE (PACKETS_PER_PAGE * sizeof(flash_packet_t))
 #define FLASH_SAMPLING 5
 
 #define LORA_TX GPIO_NUM_32
@@ -40,7 +38,7 @@
 #define LORA_AUX GPIO_NUM_34
 #define LORA_UART UART_NUM_2
 #define LORA_BAUD_RATE 9600
-#define LORA_SAMPLING 5
+#define LORA_SAMPLING 10
 
 #define GPS_TX GPIO_NUM_18
 #define GPS_RX GPIO_NUM_5
@@ -68,24 +66,6 @@
 
 static const char* TAG = "avionics";
 
-static bool flash_packet_is_empty(const flash_packet_t *pkt) {
-    const uint8_t *p = (const uint8_t *)pkt;
-
-    for (size_t i = 0; i < sizeof(flash_packet_t); i++) {
-        if (p[i] != 0xFF) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static float read_battery_voltage() {
-    int raw_adc = adc1_get_raw(ADC1_CHANNEL_0);
-
-    return (float)raw_adc * BAT_MULTIPLIER;
-}
-
 static flight_logic_t flight_logic;
 
 static lora_dev_t lora_dev = { 0 };
@@ -93,9 +73,37 @@ static gps_dev_t gps_dev = { 0 };
 static bmp280_t bmp_dev = { 0 };
 static mpu6050_dev_t mpu_dev = { 0 };
 
+static adc_oneshot_unit_handle_t adc1_handle;
+
 static QueueHandle_t flash_queue;
 static QueueHandle_t lora_queue;
 static QueueHandle_t telecommand_queue;
+
+static void arm_systems(void) {
+    if (flight_logic.should_arm == true){
+        return;
+    }
+
+    flight_logic.should_arm = true;
+    flash_log_start_flight();
+}
+
+static void disarm_systems(void) {
+    if (flight_logic.should_arm == false){
+        return;
+    }
+
+    flight_logic.should_arm = false;
+    flash_log_finish_flight(flight_logic.state.ut);
+}
+
+static float read_battery_voltage(void) {
+    int raw_adc = 0;
+
+    adc_oneshot_read(adc1_handle, ADC_CHANNEL_0, &raw_adc);
+
+    return (float)raw_adc * BAT_MULTIPLIER;
+}
 
 static void blink(uint32_t duration) {
     gpio_set_level(LED_PIN, 1);
@@ -137,6 +145,10 @@ static void avionics_task(void *arg) {
     // battery
     uint32_t battery_counter = 0;
     float battery_voltage = read_battery_voltage();
+
+    // UTC date & time
+    uint32_t utc_time = 0;
+    uint32_t utc_date = 0;
 
     // init flight logic core
     flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
@@ -201,7 +213,12 @@ static void avionics_task(void *arg) {
         }
 
         // GPS: read data
-        gps_read(&gps_dev, &flight_logic.state.lat_nmea, &flight_logic.state.lon_nmea, &flight_logic.state.satellites);
+        gps_read(&gps_dev, &flight_logic.state.lat_nmea, &flight_logic.state.lon_nmea, &flight_logic.state.satellites, &utc_time, &utc_date);
+
+        // set flash log UTC time if available
+        if (utc_time != 0 && utc_date != 0) {
+            flash_log_set_utc(utc_time, utc_date);
+        }
 
         // BAT: read voltage
         if (battery_counter++ >= BAT_SAMPLING) {
@@ -218,14 +235,14 @@ static void avionics_task(void *arg) {
                 switch (tc_payload.id) {
                     case 0:
                         if (tc_payload.param == TELECOMMAND_MAGIC) {
-                            flight_logic.should_arm = 0;
+                            disarm_systems();
                             ESP_LOGI("telecommand", "disarmed");
                         }
                         break;
 
                     case 1:
                         if (tc_payload.param == TELECOMMAND_MAGIC) {
-                            flight_logic.should_arm = 1;
+                            arm_systems();
                             ESP_LOGI("telecommand", "armed");
                         }
                         break;
@@ -247,8 +264,13 @@ static void avionics_task(void *arg) {
         // set values
         gpio_set_level(PARACHUTE_PIN, flight_logic.trigger_parachute);
 
+        if (flight_logic.trigger_shutdown) {
+            flash_log_finish_flight();
+        }
+
         // log values
         ESP_LOGI(TAG, "phase: %d, v_bat: %.2f, altitude: %.6f, pressure: %.2f, |accel|: %.2f, sats: %d, lat: %d, lon: %d", flight_logic.state.phase, battery_voltage, flight_logic.altitude_baro, flight_logic.state.pressure, sqrtf(flight_logic.state.accel.x*flight_logic.state.accel.x + flight_logic.state.accel.y*flight_logic.state.accel.y + flight_logic.state.accel.z*flight_logic.state.accel.z), flight_logic.state.satellites, flight_logic.state.lat_nmea, flight_logic.state.lon_nmea);
+        // ESP_LOGI(TAG, "ut: %lu, gps_date: %lu, gps_time: %lu, satellites: %d", flight_logic.state.ut, utc_date, utc_time, flight_logic.state.satellites);
 
         // send data to telemetry
         {
@@ -300,44 +322,11 @@ static void avionics_task(void *arg) {
 }
 
 static void flash_task(void *arg) {
-    flash_packet_t page_buffer[PACKETS_PER_PAGE]; // write buffer
-    flash_packet_t packet;
     flash_payload_t payload;
-    uint32_t offset = 0;
-    uint32_t current_flash_addr = 0;
-    int32_t last_erased_sector = -1;
 
     while (1) {
         if (xQueueReceive(flash_queue, &payload, portMAX_DELAY)) {
-            packet.magic = TELEMETRY_MAGIC;
-            packet.payload = payload;
-
-            page_buffer[offset++] = packet;
-
-            if (offset >= PACKETS_PER_PAGE) {
-                uint32_t start_sector = current_flash_addr / W25Q64_SECTOR_SIZE;
-                uint32_t end_sector = (current_flash_addr + BYTES_PER_PAGE - 1) / W25Q64_SECTOR_SIZE;
-
-                if ((int32_t)start_sector > last_erased_sector) {
-                    w25q64_erase_sector(start_sector * W25Q64_SECTOR_SIZE);
-                    last_erased_sector = start_sector;
-                }
-
-                if ((int32_t)end_sector > last_erased_sector) {
-                    w25q64_erase_sector(end_sector * W25Q64_SECTOR_SIZE);
-                    last_erased_sector = end_sector;
-                }
-
-                // write page buffer
-                if (w25q64_write_data(current_flash_addr, (const uint8_t *)page_buffer, BYTES_PER_PAGE) == ESP_OK) {
-                    ESP_LOGI(TAG, "wrote page buffer at 0x%06lX", current_flash_addr);
-                } else {
-                    ESP_LOGE(TAG, "fail to write!");
-                }
-
-                current_flash_addr += BYTES_PER_PAGE;
-                offset = 0;
-            }
+            flash_log_append(&payload);
         }
     }
 
@@ -405,45 +394,22 @@ static void lora_task(void *arg) {
     vTaskDelete(NULL);
 }
 
-static void read_telemetry(void *arg) {
-    flash_packet_t pkt;
-    uint32_t address = 0x000000;
+static void fake_telecommand_task(void *arg) {
+    telecommand_payload_t telecommand;
 
-    for (int i = 0; i < 32; i++) {
-        esp_err_t err = w25q64_read_data(address, (uint8_t *)&pkt, sizeof(flash_packet_t));
+    vTaskDelay(pdMS_TO_TICKS(40000));
 
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to read packet %d", i);
-            break;
-        }
+    // arm
+    telecommand.id = 1;
+    telecommand.param = TELECOMMAND_MAGIC;
+    xQueueSend(telecommand_queue, &telecommand, 0);
 
-        if (flash_packet_is_empty(&pkt)) {
-            ESP_LOGI(TAG, "Reached empty flash area at packet %d", i);
-            break;
-        }
+    vTaskDelay(pdMS_TO_TICKS(10000));
 
-        ESP_LOGI(TAG, "========== PACKET %d ==========", i);
-
-        ESP_LOGI(TAG, "Address: 0x%06" PRIX32, address);
-
-        ESP_LOGI(TAG, "magic:       0x%08" PRIX32, pkt.magic);
-        ESP_LOGI(TAG, "ut:          %" PRIu32, pkt.payload.ut);
-        ESP_LOGI(TAG, "phase:       %" PRIu8, pkt.payload.phase);
-
-        ESP_LOGI(TAG, "accel:       X=%.2f  Y=%.2f  Z=%.2f", pkt.payload.accel.y, pkt.payload.accel.x, pkt.payload.accel.z);
-        ESP_LOGI(TAG, "ang_vel:     X=%.2f  Y=%.2f  Z=%.2f", pkt.payload.ang_vel.x, pkt.payload.ang_vel.y, pkt.payload.ang_vel.z);
-
-        ESP_LOGI(TAG, "pressure:    %.2f", pkt.payload.pressure);
-        ESP_LOGI(TAG, "temperature: %.2f", pkt.payload.temperature);
-
-        ESP_LOGI(TAG, "lat:         %" PRId32, pkt.payload.lat_nmea);
-        ESP_LOGI(TAG, "lon:         %" PRId32, pkt.payload.lon_nmea);
-        ESP_LOGI(TAG, "satellites:  %" PRIu8, pkt.payload.satellites);
-
-        address += sizeof(flash_packet_t);
-    }
-
-    ESP_LOGI(TAG, "Done reading packets");
+    // disarm
+    telecommand.id = 0;
+    telecommand.param = TELECOMMAND_MAGIC;
+    xQueueSend(telecommand_queue, &telecommand, 0);
 
     vTaskDelete(NULL);
 }
@@ -469,10 +435,39 @@ void app_main(void) {
             ESP_LOGE(TAG, "GPIO IN config failed");
             avionics_abort(1);
         }
+    }
 
-        // ADC configuration
-        if(adc1_config_width(ADC_WIDTH_BIT_12) != ESP_OK || adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_12) != ESP_OK) {
-            ESP_LOGE(TAG, "ADC config failed");
+    // Battery ADC configuration (one-shot)
+    {
+        gpio_config_t in_bat_conf = {
+            .pin_bit_mask = (1ULL << BAT_SENSE_PIN),
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE
+        };
+
+        if(gpio_config(&in_bat_conf) != ESP_OK) {
+            ESP_LOGE(TAG, "Battery GPIO config failed");
+            avionics_abort(1);
+        }
+
+        adc_oneshot_unit_init_cfg_t init_config1 = {
+            .unit_id = ADC_UNIT_1,
+        };
+
+        if (adc_oneshot_new_unit(&init_config1, &adc1_handle) != ESP_OK) {
+            ESP_LOGE(TAG, "ADC unit failed to init");
+            avionics_abort(1);
+        }
+
+        adc_oneshot_chan_cfg_t adc_config = {
+            .bitwidth = ADC_BITWIDTH_12,
+            .atten = ADC_ATTEN_DB_12,
+        };
+
+        if (adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_0, &adc_config) != ESP_OK) {
+            ESP_LOGE(TAG, "ADC channel config failed");
             avionics_abort(1);
         }
     }
@@ -507,6 +502,14 @@ void app_main(void) {
         ESP_LOGI(TAG, "W25Q64 initialized");
     }
 
+    // DEBUG
+    flash_log_list_flights();
+
+    if (flash_log_read_flight(1) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read flight");
+    }
+    return;
+
     // check boot button
     {
         gpio_set_level(LED_PIN, 1); // LED on
@@ -535,7 +538,7 @@ void app_main(void) {
         // read flash memory
         if (boot_pressed) {
             ESP_LOGI(TAG, "Boot button pressed");
-            xTaskCreate(read_telemetry, "read_telemetry", 4096, NULL, 5, NULL);
+            flash_log_read_telemetry();
             return;
         }
 
@@ -641,5 +644,8 @@ void app_main(void) {
     // create tasks
     xTaskCreatePinnedToCore(avionics_task, "avionics_task", 4096, NULL, 10, NULL, 1); // APP_CPU
     xTaskCreatePinnedToCore(lora_task, "lora_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
-    // xTaskCreatePinnedToCore(flash_task, "flash_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
+    xTaskCreatePinnedToCore(flash_task, "flash_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
+
+    // DEBUG
+    xTaskCreatePinnedToCore(fake_telecommand_task, "fake_telecommand_task", 1024, NULL, 5, NULL, 0); // PRO_CPU
 }
