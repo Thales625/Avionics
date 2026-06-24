@@ -3,7 +3,6 @@
 #include "esp_log.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
-#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "soc/gpio_num.h"
 
@@ -15,6 +14,7 @@ static const char *TAG = "w25q64";
 #define CMD_PAGE_PROGRAM    0x02
 #define CMD_SECTOR_ERASE    0x20
 #define CMD_JEDEC_ID        0x9F
+#define CMD_CHIP_ERASE      0xC7 // Bulk Erase
 
 static spi_device_handle_t w25q64_spi;
 static gpio_num_t w25q64_cs_pin;
@@ -29,7 +29,7 @@ static inline void w25q64_cs_high(void) {
 
 static inline void w25q64_wait_ready(void) {
     while ((w25q64_read_status() & 0x01) == 0x01) {
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 
@@ -222,5 +222,29 @@ esp_err_t w25q64_erase_sector(uint32_t sector_address) {
     w25q64_wait_ready();
 
     ESP_LOGI(TAG, "Erased sector at 0x%06lX", sector_address);
+    return ESP_OK;
+}
+
+esp_err_t w25q64_erase_chip(void) {
+    ESP_LOGI(TAG, "Starting chip erase...");
+
+    w25q64_write_enable();
+    w25q64_cs_low();
+
+    uint8_t cmd = CMD_CHIP_ERASE;
+    spi_transaction_t t = { .length = 8, .tx_buffer = &cmd };
+    esp_err_t ret = spi_device_polling_transmit(w25q64_spi, &t);
+
+    w25q64_cs_high();
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to send Bulk Erase command");
+        return ret;
+    }
+
+    w25q64_wait_ready();
+
+    ESP_LOGI(TAG, "Memory erased successfully");
+
     return ESP_OK;
 }

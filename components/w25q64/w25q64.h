@@ -35,4 +35,9 @@ esp_err_t w25q64_write_data(uint32_t address, const uint8_t *data, size_t size);
  */
 esp_err_t w25q64_erase_sector(uint32_t sector_address);
 
+/**
+ * @brief Erases the entire chip.
+ */
+esp_err_t w25q64_erase_chip(void);
+
 #endif
