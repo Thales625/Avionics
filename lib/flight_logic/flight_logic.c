@@ -40,7 +40,7 @@ static const char* TAG = "flight_logic";
 #endif
 
 void flight_logic_init(flight_logic_t *core) {
-    core->state.phase = PHASE_WAITING;
+    core->state.phase = PHASE_STANDBY;
 
     core->ut_0 = core->state.ut;
     core->pressure_0 = core->state.pressure;
@@ -81,7 +81,7 @@ void flight_logic_update(flight_logic_t *core) {
     }
 
     switch (core->state.phase) {
-        case PHASE_WAITING:
+        case PHASE_STANDBY:
             if (core->should_arm) {
                 core->state.phase = PHASE_PRE_FLIGHT;
             }
@@ -89,9 +89,11 @@ void flight_logic_update(flight_logic_t *core) {
 
         case PHASE_PRE_FLIGHT:
             if (!core->should_arm) {
-                core->state.phase = PHASE_WAITING;
+                core->state.phase = PHASE_STANDBY;
                 break;
             }
+
+            // liftoff detection
             if (core->state.accel.x*core->state.accel.x + core->state.accel.y*core->state.accel.y + core->state.accel.z*core->state.accel.z > _acc_threshold2) {
                 liftoff_count++;
                 if (liftoff_count >= LAUNCH_CONFIRMATION_COUNT) {
@@ -111,6 +113,7 @@ void flight_logic_update(flight_logic_t *core) {
             // sensor update check
             if (!baro_updated) break;
 
+            // altitude tracking
             if (core->altitude_baro > max_altitude_baro) {
                 max_altitude_baro = core->altitude_baro;
                 parachute_ejection_count = 0; // reset count

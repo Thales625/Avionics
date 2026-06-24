@@ -26,7 +26,7 @@ typedef signed char int8_t;
 #include "math_helper.h"
 
 typedef enum {
-    PHASE_WAITING,
+    PHASE_STANDBY,
     PHASE_PRE_FLIGHT,
     PHASE_ASCENT,
     PHASE_PARACHUTE_DEPLOY,
