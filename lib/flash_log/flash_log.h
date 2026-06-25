@@ -9,12 +9,30 @@
 
 #define FLASH_HEADER_MAGIC 0x46484452 // "FHDR"
 #define FLASH_PACKET_MAGIC 0x46504143 // "FPAC"
+#define FLASH_USB_MAGIC    0x46555342 // "FUSB"
 
-#define FLASH_FORMAT_VERSION 2
+#define FLASH_FORMAT_VERSION 3
 
 #define FLASH_PAGE_SIZE 256
 #define PACKETS_PER_PAGE (FLASH_PAGE_SIZE / sizeof(flash_packet_t))
 #define BYTES_PER_PAGE (PACKETS_PER_PAGE * sizeof(flash_packet_t))
+
+typedef struct __attribute__((packed)) {
+    // identify
+    uint32_t magic; // FLASH_HEADER_MAGIC
+    uint8_t header_size;
+    uint8_t packet_size;
+    uint8_t format_version;
+
+    // validation
+    uint8_t status; // 0xFF = in progress | 0x00 = completed
+    uint32_t next_header_addr;
+
+    // flight data
+    uint32_t flight_number;
+    uint32_t duration; // ms
+    uint32_t timestamp;
+} flash_header_t;
 
 typedef struct __attribute__((packed)) {
     uint32_t ut;
@@ -38,34 +56,23 @@ typedef struct __attribute__((packed)) {
     flash_payload_t payload;
 } flash_packet_t;
 
-typedef struct __attribute__((packed)) {
-    uint32_t magic; // FLASH_HEADER_MAGIC
-
-    uint8_t format_version;
-
-    uint32_t next_header_addr;
-    uint8_t status; // 0xFF = in progress | 0x00 = completed
-
-    uint32_t flight_number;
-
-    uint32_t duration; // ms
-
-    uint32_t utc_time, utc_date;
-} flash_header_t;
-
 void flash_log_list_flights(void);
 
 esp_err_t flash_log_read_flight(uint32_t flight_number);
 
-void flash_log_read_telemetry(void);
+
+
+esp_err_t flash_log_init(void);
 
 esp_err_t flash_log_start_flight(void);
 
-esp_err_t flash_log_append(const flash_payload_t *payload);
+esp_err_t flash_log_append(flash_payload_t *payload);
 
 esp_err_t flash_log_set_utc(uint32_t utc_time, uint32_t utc_date);
 
 esp_err_t flash_log_finish_flight(uint32_t duration);
+
+
 
 void flash_log_clear_flights(void);
 

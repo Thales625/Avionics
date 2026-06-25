@@ -9,26 +9,21 @@
 static const char *TAG = "flash_log";
 
 static bool writting = false;
-static bool utc_time_set = false;
-
-static flash_header_t header;
-static uint32_t header_addr;
+static bool timestamp_set = false;
 
 static flash_packet_t page_buffer[PACKETS_PER_PAGE];
 static uint32_t buffer_offset;
 
-static uint32_t current_flash_addr;
+static flash_header_t current_header;
+static uint32_t current_header_addr;
 
-static uint32_t sizeof_header(flash_header_t *flash_header) {
-    if (flash_header->format_version == 1) return 22;
-    if (flash_header->format_version == 2) return 26;
-    return sizeof(flash_header_t);
-}
+static uint32_t current_packet_addr;
 
-static bool packet_is_empty(flash_packet_t *pkt) {
+
+static bool packet_is_empty(uint8_t *pkt, uint32_t len) {
     const uint8_t *p = (const uint8_t *)pkt;
 
-    for (size_t i = 0; i < sizeof(flash_packet_t); i++) {
+    for (size_t i = 0; i < len; i++) {
         if (p[i] != 0xFF) {
             return false;
         }
@@ -42,49 +37,79 @@ static esp_err_t flush_buffer(void) {
 
     uint32_t bytes_to_write = buffer_offset * sizeof(flash_packet_t);
 
-    esp_err_t ret = w25q64_write_data(current_flash_addr, (uint8_t *)page_buffer, bytes_to_write);
+    esp_err_t ret = w25q64_write_data(current_packet_addr, (uint8_t *)page_buffer, bytes_to_write);
 
-    if (ret == ESP_OK) current_flash_addr += bytes_to_write;
+    if (ret == ESP_OK) current_packet_addr += bytes_to_write;
 
     buffer_offset = 0;
 
     return ret;
 }
 
-static esp_err_t solve_corrupted_log(flash_header_t *corrupted_header){
-    if (corrupted_header->status == 0x00) return ESP_OK;
+static esp_err_t solve_corrupted_log(flash_header_t *corrupted_header, uint32_t corrupted_header_addr) {
+    if (corrupted_header->status == 0x00 || corrupted_header->next_header_addr != 0xFFFFFFFF) return ESP_OK;
 
-    return ESP_FAIL;
+    if (corrupted_header->header_size != sizeof(flash_header_t)) {
+        ESP_LOGW(TAG, "treating a log with different header size than current: %d vs %d", corrupted_header->header_size, sizeof(flash_header_t));
+    }
+
+    uint8_t *packet = (uint8_t *)malloc(corrupted_header->packet_size);
+    uint32_t packet_addr = corrupted_header_addr + corrupted_header->header_size;
+
+    while (1) {
+        if (w25q64_read_data(packet_addr, packet, corrupted_header->packet_size) != ESP_OK) {
+            free(packet);
+            return ESP_FAIL;
+        }
+
+        if (packet_is_empty(packet, corrupted_header->packet_size)) {
+            free(packet);
+            corrupted_header->next_header_addr = packet_addr;
+            if (w25q64_write_data(corrupted_header_addr + offsetof(flash_header_t, next_header_addr), (uint8_t *)&packet_addr, sizeof(packet_addr)) != ESP_OK) return ESP_FAIL;
+            return ESP_OK;
+        }
+
+        packet_addr += corrupted_header->packet_size;
+    }
 }
 
-static esp_err_t get_last_header(flash_header_t *header_out) {
+static esp_err_t get_last_header(flash_header_t *last_header) {
     flash_header_t search_header;
     search_header.next_header_addr = 0;
 
     // initial values
-    memset(header_out, 0xFF, sizeof_header(header_out));
-    header_out->next_header_addr = 0;
-    header_out->flight_number = 0;
-    header_out->status = 0xFF;
+    memset(last_header, 0xFF, sizeof(flash_header_t));
+    last_header->next_header_addr = 0;
+    last_header->flight_number = 0;
 
     while (1) {
+        uint32_t prev_header_addr = search_header.next_header_addr;
+
         if (w25q64_read_data(search_header.next_header_addr, (uint8_t *)&search_header, sizeof(flash_header_t)) != ESP_OK) return ESP_FAIL;
 
         if (search_header.magic == FLASH_HEADER_MAGIC) {
-            if (search_header.status != 0x00) {
-                // CORRUPTED flight log
-                // TODO: find final of log
-                return ESP_FAIL;
+            if (search_header.status != 0x00 && search_header.next_header_addr == 0xFFFFFFFF) {
+                // corrupted flight log
+                ESP_LOGI(TAG, "Corrupted log found, solving...");
+
+                if (solve_corrupted_log(&search_header, prev_header_addr) != ESP_OK) return ESP_FAIL;
+
+                memcpy(last_header, &search_header, sizeof(flash_header_t)); // last_header = search_header
+
+                return ESP_OK;
+            } else {
+                // not corrupted flight log
             }
         } else {
-            break;
+            return ESP_OK;
         }
 
-        memcpy(header_out, &search_header, sizeof(flash_header_t)); // header = search_header
+        memcpy(last_header, &search_header, sizeof(flash_header_t)); // last_header = search_header
     }
 
     return ESP_OK;
 }
+
 
 void flash_log_list_flights(void) {
     flash_header_t search_header;
@@ -97,8 +122,7 @@ void flash_log_list_flights(void) {
             // its a valid header
             ESP_LOGI(TAG, "Flight number: %d", search_header.flight_number);
             ESP_LOGI(TAG, "Status: %d", search_header.status);
-            ESP_LOGI(TAG, "UTC time: %d", search_header.utc_time);
-            ESP_LOGI(TAG, "UTC date: %d", search_header.utc_date);
+            ESP_LOGI(TAG, "timestamp: %d", search_header.timestamp);
             ESP_LOGI(TAG, "Format version: %d", search_header.format_version);
             ESP_LOGI(TAG, "Next header address: %d", search_header.next_header_addr);
             ESP_LOGI(TAG, "------------------------");
@@ -126,8 +150,7 @@ esp_err_t flash_log_read_flight(uint32_t flight_number) {
                 ESP_LOGI(TAG, "---Reading packet---");
                 ESP_LOGI(TAG, "Flight number: %d", search_header.flight_number);
                 ESP_LOGI(TAG, "Status: %d", search_header.status);
-                ESP_LOGI(TAG, "UTC time: %d", search_header.utc_time);
-                ESP_LOGI(TAG, "UTC date: %d", search_header.utc_date);
+                ESP_LOGI(TAG, "timestamp: %d", search_header.timestamp);
                 ESP_LOGI(TAG, "Format version: %d", search_header.format_version);
                 ESP_LOGI(TAG, "Next header address: %d", search_header.next_header_addr);
                 ESP_LOGI(TAG, "========================");
@@ -172,64 +195,45 @@ esp_err_t flash_log_read_flight(uint32_t flight_number) {
     return ESP_FAIL;
 }
 
-void flash_log_read_telemetry(void) {
-    flash_packet_t packet;
-    uint32_t address = 0;
-
-    while (1) {
-        esp_err_t err = w25q64_read_data(address, (uint8_t *)&packet, sizeof(flash_packet_t));
-
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to read packet at %d", address);
-            break;
-        }
-
-        ESP_LOGI(TAG, "Packet %d: 0x%02X", address / sizeof(flash_packet_t), packet);
-
-        if (packet_is_empty(&packet)) {
-            ESP_LOGI(TAG, "Reached empty flash area at packet %d", address);
-            break;
-        }
 
 
-        address += sizeof(flash_packet_t);
-    }
+esp_err_t flash_log_init(void) {
+    writting = false;
+    timestamp_set = false;
+    buffer_offset = 0;
+    memset(page_buffer, 0xFF, sizeof(page_buffer));
 
-    ESP_LOGI(TAG, "Done reading flash memory");
+    // get last header
+    flash_header_t last_header;
+    if (get_last_header(&last_header) != ESP_OK) return ESP_FAIL;
+
+    // define new header
+    memset(&current_header, 0xFF, sizeof(current_header));
+    current_header.magic = FLASH_HEADER_MAGIC;
+    current_header.header_size = sizeof(flash_header_t);
+    current_header.packet_size = sizeof(flash_packet_t);
+    current_header.format_version = FLASH_FORMAT_VERSION;
+
+    current_header.flight_number = last_header.flight_number+1;
+
+    current_header_addr = last_header.next_header_addr;
+    current_packet_addr = current_header_addr + sizeof(flash_header_t);
+
+    return ESP_OK;
 }
 
 esp_err_t flash_log_start_flight(void) {
     if (writting) return ESP_OK;
 
     writting = true;
-    buffer_offset = 0;
-    memset(page_buffer, 0xFF, sizeof(page_buffer));
 
-    // get last header
-    flash_header_t last_header;
-    get_last_header(&last_header);
-
-    // write new header
-    memset(&header, 0xFF, sizeof(header));
-    header.magic = FLASH_HEADER_MAGIC;
-    header.format_version = FLASH_FORMAT_VERSION;
-    header.next_header_addr = 0xFFFFFFFF;
-    header.status = 0xFF;
-    header.flight_number = last_header.flight_number+1;
-    header.duration = 0xFFFFFFFF;
-    header.utc_time = 0xFFFFFFFF;
-    header.utc_date = 0xFFFFFFFF;
-
-    header_addr = last_header.next_header_addr;
-
-    w25q64_write_data(header_addr, (uint8_t *)&header, sizeof(header));
-
-    current_flash_addr = header_addr + sizeof(header);
-
-    return ESP_OK;
+    // write header
+    return w25q64_write_data(current_header_addr, (uint8_t *)&current_header, sizeof(flash_header_t));
 }
 
-esp_err_t flash_log_append(const flash_payload_t *payload) {
+esp_err_t flash_log_append(flash_payload_t *payload) {
+    if (!writting) return ESP_FAIL;
+
     page_buffer[buffer_offset].magic = FLASH_PACKET_MAGIC;
     page_buffer[buffer_offset].payload = *payload;
 
@@ -241,10 +245,25 @@ esp_err_t flash_log_append(const flash_payload_t *payload) {
 }
 
 esp_err_t flash_log_set_utc(uint32_t utc_time, uint32_t utc_date) {
-    if (writting && !utc_time_set) {
-        header.utc_time = utc_time;
-        header.utc_date = utc_date;
-        utc_time_set = true;
+    if (writting && !timestamp_set) {
+        // convert UTC to timestamp
+        uint32_t day   = utc_date / 10000;
+        uint32_t month = (utc_date / 100) % 100;
+        uint32_t year  = 2000 + (utc_date % 100);
+
+        uint32_t hour = utc_time / 10000;
+        uint32_t min  = (utc_time / 100) % 100;
+        uint32_t sec  = utc_time % 100;
+
+        current_header.timestamp = ((year - 2026) << 26) |
+            (month << 22) |
+            (day   << 17) |
+            (hour  << 12) |
+            (min   << 6 ) |
+            sec;
+
+        timestamp_set = true;
+
         return ESP_OK;
     }
     return ESP_FAIL;
@@ -254,16 +273,18 @@ esp_err_t flash_log_finish_flight(uint32_t duration) {
     if (!writting) return ESP_OK;
 
     writting = false;
-    utc_time_set = false;
+    timestamp_set = false;
 
-    if (flush_buffer() != ESP_OK) return ESP_OK;
+    flush_buffer();
 
-    header.next_header_addr = current_flash_addr;
-    header.status = 0x00;
-    header.duration = duration;
+    current_header.status = 0x00;
+    current_header.next_header_addr = current_packet_addr;
+    current_header.duration = duration;
 
-    return w25q64_write_data(header_addr, (uint8_t *)&header, sizeof(header));
+    return w25q64_write_data(current_header_addr, (uint8_t *)&current_header, sizeof(current_header));
 }
+
+
 
 void flash_log_clear_flights(void) {
     // clear all flights
