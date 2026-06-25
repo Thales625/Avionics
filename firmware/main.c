@@ -1,3 +1,4 @@
+#include "driver/uart.h"
 #include "freertos/FreeRTOS.h" // IWYU pragma: keep
 #include "freertos/projdefs.h"
 #include "freertos/queue.h"
@@ -6,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
+#include "driver/uart.h"
 #include "esp_adc/adc_oneshot.h"
 #include "portmacro.h"
 
@@ -30,6 +32,9 @@
 #define SPI_CLK GPIO_NUM_21
 #define W25Q_CS GPIO_NUM_23
 #define FLASH_SAMPLING 5
+
+#define USB_BAUD_RATE 115200
+#define UART_PORT_USB UART_NUM_0
 
 #define LORA_TX GPIO_NUM_32
 #define LORA_RX GPIO_NUM_33
@@ -265,7 +270,7 @@ static void avionics_task(void *arg) {
         gpio_set_level(PARACHUTE_PIN, flight_logic.trigger_parachute);
 
         if (flight_logic.trigger_shutdown) {
-            flash_log_finish_flight();
+            flash_log_finish_flight(flight_logic.state.ut - flight_logic.ut_0);
         }
 
         // log values
@@ -389,6 +394,54 @@ static void lora_task(void *arg) {
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    vTaskDelete(NULL);
+}
+
+static void flash_interface_task(void *arg) {
+    // init usb uart
+    {
+        uart_config_t uart_config = {
+            .baud_rate = USB_BAUD_RATE,
+            .data_bits = UART_DATA_8_BITS,
+            .parity    = UART_PARITY_DISABLE,
+            .stop_bits = UART_STOP_BITS_1,
+            .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+            .source_clk = UART_SCLK_APB,
+        };
+
+        uart_driver_install(UART_PORT_USB, 256, 256, 0, NULL, 0);
+        uart_param_config(UART_PORT_USB, &uart_config);
+        if (uart_set_pin(UART_PORT_USB, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) {
+            avionics_abort(8);
+        }
+        uart_flush(UART_PORT_USB);
+        uart_flush_input(UART_PORT_USB);
+    }
+
+    uint8_t rx_byte;
+    uint32_t rx_magic;
+    uint32_t rx_id;
+    int32_t rx_param;
+
+    while (1) {
+        // read usb uart port
+        if (uart_read_bytes(UART_PORT_USB, &rx_byte, sizeof(rx_byte), portMAX_DELAY) > 0) {
+            // receive usb bytes
+            rx_magic = (rx_magic >> 8) | ((uint32_t)rx_byte << 24); // little-endian
+
+            if (rx_magic == FLASH_USB_MAGIC) {
+                if (uart_read_bytes(UART_PORT_USB, &rx_id, sizeof(rx_id), pdMS_TO_TICKS(50)) == sizeof(rx_id)) {
+                    if (uart_read_bytes(UART_PORT_USB, &rx_param, sizeof(rx_param), pdMS_TO_TICKS(50)) == sizeof(rx_param)) {
+
+                    }
+                }
+                rx_magic = 0;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 
     vTaskDelete(NULL);
@@ -538,7 +591,7 @@ void app_main(void) {
         // read flash memory
         if (boot_pressed) {
             ESP_LOGI(TAG, "Boot button pressed");
-            flash_log_read_telemetry();
+            xTaskCreate(flash_interface_task, "flash_interface", 4096, NULL, 5, NULL);
             return;
         }
 
@@ -642,10 +695,10 @@ void app_main(void) {
     }
 
     // create tasks
-    xTaskCreatePinnedToCore(avionics_task, "avionics_task", 4096, NULL, 10, NULL, 1); // APP_CPU
-    xTaskCreatePinnedToCore(lora_task, "lora_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
-    xTaskCreatePinnedToCore(flash_task, "flash_task", 4096, NULL, 5, NULL, 0); // PRO_CPU
+    xTaskCreatePinnedToCore(avionics_task, "avionics", 4096, NULL, 10, NULL, 1); // APP_CPU
+    xTaskCreatePinnedToCore(lora_task, "lora", 4096, NULL, 5, NULL, 0); // PRO_CPU
+    xTaskCreatePinnedToCore(flash_task, "flash", 4096, NULL, 5, NULL, 0); // PRO_CPU
 
     // DEBUG
-    xTaskCreatePinnedToCore(fake_telecommand_task, "fake_telecommand_task", 1024, NULL, 5, NULL, 0); // PRO_CPU
+    xTaskCreatePinnedToCore(fake_telecommand_task, "fake_telecommand", 1024, NULL, 5, NULL, 0); // PRO_CPU
 }
