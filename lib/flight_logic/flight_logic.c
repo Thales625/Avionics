@@ -59,7 +59,7 @@ void flight_logic_update(flight_logic_t *core) {
     static uint32_t liftoff_count = 0;
     static uint32_t parachute_ejection_count = 0;
     static uint32_t descent_time = 0;
-    static uint32_t ut_0 = 0;
+    static uint32_t ut_ref = 0;
 
     SIM_LOG("|ACCEL|: %f", sqrtf(core->state.accel.x*core->state.accel.x + core->state.accel.y*core->state.accel.y + core->state.accel.z*core->state.accel.z));
 
@@ -128,13 +128,13 @@ void flight_logic_update(flight_logic_t *core) {
 
         case PHASE_PARACHUTE_DEPLOY:
             core->trigger_parachute = true;
-            ut_0 = core->state.ut;
+            ut_ref = core->state.ut;
             core->state.phase = PHASE_DESCENT;
             SIM_LOG("PARACHUTE DEPLOY");
             break;
 
         case PHASE_DESCENT:
-            descent_time = core->state.ut - ut_0;
+            descent_time = core->state.ut - ut_ref;
 
             if (descent_time > EJECTION_MAX_TIME) { // check ejection time
                 core->trigger_parachute = false;
