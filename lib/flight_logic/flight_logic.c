@@ -42,6 +42,9 @@ static const char* TAG = "flight_logic";
 void flight_logic_init(flight_logic_t *core) {
     core->state.phase = PHASE_STANDBY;
 
+    core->state.lat_nmea = 0;
+    core->state.lon_nmea = 0;
+
     core->ut_0 = core->state.ut;
     core->pressure_0 = core->state.pressure;
 

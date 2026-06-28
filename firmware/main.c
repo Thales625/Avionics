@@ -1,4 +1,3 @@
-#include "driver/uart.h"
 #include "freertos/FreeRTOS.h" // IWYU pragma: keep
 #include "freertos/projdefs.h"
 #include "freertos/queue.h"
@@ -16,6 +15,7 @@
 
 #include "flight_logic.h"
 #include "flash_log.h"
+#include "flash_interface.h"
 #include "tmtc.h"
 #include "crc.h"
 
@@ -25,7 +25,8 @@
 #include "gps.h"
 #include "w25q64.h"
 
-#define BOOT_TIMEOUT 3000
+#define AVIONICS_INTERVAL pdMS_TO_TICKS(40) // 40 ms = 25 Hz
+#define BOOT_TIMEOUT pdMS_TO_TICKS(3000)
 
 #define SPI_MISO GPIO_NUM_22
 #define SPI_MOSI GPIO_NUM_19
@@ -99,7 +100,7 @@ static void disarm_systems(void) {
     }
 
     flight_logic.should_arm = false;
-    flash_log_finish_flight(flight_logic.state.ut);
+    flash_log_finish_flight(flight_logic.state.ut - flight_logic.ut_0);
 }
 
 static float read_battery_voltage(void) {
@@ -134,6 +135,7 @@ static void avionics_abort(int code) {
     }
 }
 
+
 static void avionics_task(void *arg) {
     // lora
     uint32_t lora_counter = 0;
@@ -159,7 +161,7 @@ static void avionics_task(void *arg) {
     flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
     if (bmp280_read_float(&bmp_dev, &flight_logic.state.temperature, &flight_logic.state.pressure) != ESP_OK) {
         ESP_LOGW(TAG, "BMP280: initial reading failed");
-        avionics_abort(8);
+        avionics_abort(9);
     }
     if (mpu6050_get_motion(&mpu_dev, &flight_logic.state.accel, &flight_logic.state.ang_vel) != ESP_OK) {
         ESP_LOGW(TAG, "MPU6050: initial reading failed");
@@ -169,7 +171,7 @@ static void avionics_task(void *arg) {
 
     // frequency
     TickType_t last_tick = xTaskGetTickCount();
-    const TickType_t interval = pdMS_TO_TICKS(40); // 40 ms = 25 Hz
+    const TickType_t interval = AVIONICS_INTERVAL;
 
     // main loop
     while (1) {
@@ -221,8 +223,8 @@ static void avionics_task(void *arg) {
         gps_read(&gps_dev, &flight_logic.state.lat_nmea, &flight_logic.state.lon_nmea, &flight_logic.state.satellites, &utc_time, &utc_date);
 
         // set flash log UTC time if available
-        if (utc_time != 0 && utc_date != 0) {
-            flash_log_set_utc(utc_time, utc_date);
+        if (utc_time != 0 && utc_date != 0 && flight_logic.state.lat_nmea != 0 && flight_logic.state.lon_nmea != 0) {
+            flash_log_set_gps_data(utc_time, utc_date, flight_logic.state.lat_nmea, flight_logic.state.lon_nmea);
         }
 
         // BAT: read voltage
@@ -230,7 +232,7 @@ static void avionics_task(void *arg) {
             battery_counter = 0;
             float current_vbat = read_battery_voltage();
 
-            battery_voltage = (0.8f * battery_voltage) + (0.2f * current_vbat);
+            battery_voltage = (0.9f * battery_voltage) + (0.1f * current_vbat);
         }
 
         // consume telecommand
@@ -238,25 +240,27 @@ static void avionics_task(void *arg) {
             if (xQueueReceive(telecommand_queue, &tc_payload, 0) == pdTRUE) {
                 ESP_LOGI("telecommand", "id=%d param=%d", tc_payload.id, tc_payload.param);
                 switch (tc_payload.id) {
-                    case 0:
+                    case TC_DISARM:
                         if (tc_payload.param == TELECOMMAND_MAGIC) {
                             disarm_systems();
                             ESP_LOGI("telecommand", "disarmed");
                         }
                         break;
 
-                    case 1:
+                    case TC_ARM:
                         if (tc_payload.param == TELECOMMAND_MAGIC) {
                             arm_systems();
                             ESP_LOGI("telecommand", "armed");
                         }
                         break;
 
-                    case 2:
+                    case TC_PARACHUTE_EJECT:
                         if (flight_logic.state.phase >= PHASE_PRE_FLIGHT && tc_payload.param == TELECOMMAND_MAGIC) {
                             flight_logic.state.phase = PHASE_PARACHUTE_DEPLOY;
+                            ESP_LOGI("telecommand", "parachute eject");
                         }
                         break;
+
                     default:
                         break;
                 }
@@ -345,13 +349,12 @@ static void lora_task(void *arg) {
     packet.magic = TELEMETRY_MAGIC;
 
     // telecommand
-    // telecommand_payload_t telecommand;
-    // uint32_t tc_magic = 0;
-    // uint16_t tc_checksum = 0;
-    // uint8_t tc_byte;
+    telecommand_payload_t telecommand;
+    uint32_t tc_magic = 0;
+    uint16_t tc_checksum = 0;
+    uint8_t tc_byte;
 
     while (1) {
-        /* IGNORE FOR NOW
         // receive telecommand
         for (uint32_t tc_reads=0; tc_reads<32; tc_reads++) {
             if (lora_receive_bytes(&lora_dev, &tc_byte, 1, 0) <= 0) {
@@ -381,7 +384,6 @@ static void lora_task(void *arg) {
                 break;
             }
         }
-        */
 
         // transmit telemetry
         if (xQueueReceive(lora_queue, &payload, 0) == pdTRUE) {
@@ -399,6 +401,7 @@ static void lora_task(void *arg) {
     vTaskDelete(NULL);
 }
 
+
 static void flash_interface_task(void *arg) {
     // init usb uart
     {
@@ -414,14 +417,14 @@ static void flash_interface_task(void *arg) {
         uart_driver_install(UART_PORT_USB, 256, 256, 0, NULL, 0);
         uart_param_config(UART_PORT_USB, &uart_config);
         if (uart_set_pin(UART_PORT_USB, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) {
-            avionics_abort(8);
+            avionics_abort(10);
         }
         uart_flush(UART_PORT_USB);
         uart_flush_input(UART_PORT_USB);
     }
 
     uint8_t rx_byte;
-    uint32_t rx_magic;
+    uint32_t rx_magic = 0;
     uint32_t rx_id;
     int32_t rx_param;
 
@@ -432,8 +435,68 @@ static void flash_interface_task(void *arg) {
             rx_magic = (rx_magic >> 8) | ((uint32_t)rx_byte << 24); // little-endian
 
             if (rx_magic == FLASH_USB_MAGIC) {
-                if (uart_read_bytes(UART_PORT_USB, &rx_id, sizeof(rx_id), pdMS_TO_TICKS(50)) == sizeof(rx_id)) {
-                    if (uart_read_bytes(UART_PORT_USB, &rx_param, sizeof(rx_param), pdMS_TO_TICKS(50)) == sizeof(rx_param)) {
+                if (uart_read_bytes(UART_PORT_USB, &rx_id, sizeof(rx_id), pdMS_TO_TICKS(200)) == sizeof(rx_id)) {
+                    if (uart_read_bytes(UART_PORT_USB, &rx_param, sizeof(rx_param), pdMS_TO_TICKS(200)) == sizeof(rx_param)) {
+                        flash_header_t* headers;
+                        uint32_t headers_len;
+
+                        flash_header_t header;
+
+                        uint32_t header_addr;
+                        flash_packet_t packet;
+
+                        switch (rx_id) {
+                            case CMD_ACK:
+                                // send ack
+                                uart_write_bytes(UART_PORT_USB, &flash_ack, sizeof(flash_ack));
+                                break;
+                            case CMD_CLEAR_FLIGHTS:
+                                if (flash_log_clear_flights() == ESP_OK) {
+                                    uart_write_bytes(UART_PORT_USB, &flash_ack, sizeof(flash_ack));
+                                } else {
+                                    uart_write_bytes(UART_PORT_USB, &flash_nack, sizeof(flash_nack));
+                                }
+                                break;
+                            case CMD_LIST_HEADERS:
+                                headers = flash_log_get_headers(&headers_len);
+
+                                if (headers_len != 0) {
+                                    // transmit headers
+                                    uart_write_bytes(UART_PORT_USB, (uint8_t *)headers, headers_len*sizeof(flash_header_t));
+                                }
+
+                                uart_write_bytes(UART_PORT_USB, &flash_ack, sizeof(flash_ack));
+
+                                free(headers);
+                                break;
+                            case CMD_READ_HEADER: // flight_number = rx_param
+                                if (flash_log_get_header(rx_param, &header, NULL) == ESP_OK) {
+                                    uart_write_bytes(UART_PORT_USB, (uint8_t *)&header, sizeof(flash_header_t));
+                                    uart_write_bytes(UART_PORT_USB, &flash_ack, sizeof(flash_ack));
+                                } else {
+                                    uart_write_bytes(UART_PORT_USB, &flash_nack, sizeof(flash_nack));
+                                }
+
+                                break;
+                            case CMD_READ_FLIGHT: // flight_number = rx_param
+                                if (flash_log_get_header(rx_param, &header, &header_addr) == ESP_OK) {
+                                    for (uint32_t addr=header_addr+header.header_size; addr<header.next_header_addr; addr+=header.packet_size) {
+                                        if (flash_log_get_flight_packet(addr, header.packet_size, &packet) != ESP_OK) {
+                                            uart_write_bytes(UART_PORT_USB, &flash_nack, sizeof(flash_nack));
+                                            break;
+                                        }
+
+                                        uart_write_bytes(UART_PORT_USB, (uint8_t *)&packet, header.packet_size);
+                                    }
+                                    uart_write_bytes(UART_PORT_USB, &flash_ack, sizeof(flash_ack));
+                                } else {
+                                    uart_write_bytes(UART_PORT_USB, &flash_nack, sizeof(flash_nack));
+                                }
+                                break;
+                            default:
+                                uart_write_bytes(UART_PORT_USB, &flash_nack, sizeof(flash_nack));
+                                break;
+                        }
 
                     }
                 }
@@ -447,32 +510,7 @@ static void flash_interface_task(void *arg) {
     vTaskDelete(NULL);
 }
 
-static void fake_telecommand_task(void *arg) {
-    telecommand_payload_t telecommand;
-
-    vTaskDelay(pdMS_TO_TICKS(40000));
-
-    // arm
-    telecommand.id = 1;
-    telecommand.param = TELECOMMAND_MAGIC;
-    xQueueSend(telecommand_queue, &telecommand, 0);
-
-    vTaskDelay(pdMS_TO_TICKS(10000));
-
-    // disarm
-    telecommand.id = 0;
-    telecommand.param = TELECOMMAND_MAGIC;
-    xQueueSend(telecommand_queue, &telecommand, 0);
-
-    vTaskDelete(NULL);
-}
-
 void app_main(void) {
-    // create xQueue
-    flash_queue = xQueueCreate(32, sizeof(flash_payload_t));
-    lora_queue = xQueueCreate(1, sizeof(lora_payload_t)); // mailbox
-    telecommand_queue = xQueueCreate(8, sizeof(telecommand_payload_t));
-
     // GPIO IN configuration
     {
         gpio_config_t in_conf = {
@@ -555,15 +593,15 @@ void app_main(void) {
         ESP_LOGI(TAG, "W25Q64 initialized");
     }
 
-    // DEBUG
-    flash_log_list_flights();
-
-    if (flash_log_read_flight(1) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read flight");
+    // Flash Log initialization
+    {
+        if (flash_log_init() != ESP_OK) {
+            ESP_LOGE(TAG, "Flash log failed to init");
+            avionics_abort(3);
+        }
     }
-    return;
 
-    // check boot button
+    // check boot button (Flash Interface)
     {
         gpio_set_level(LED_PIN, 1); // LED on
 
@@ -573,7 +611,7 @@ void app_main(void) {
 
         // waiting
         TickType_t start = xTaskGetTickCount();
-        while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(BOOT_TIMEOUT)) {
+        while ((xTaskGetTickCount() - start) < BOOT_TIMEOUT) {
             if (gpio_get_level(BOOT_PIN) == 0) {
                 // simple debounce
                 vTaskDelay(pdMS_TO_TICKS(30));
@@ -588,9 +626,24 @@ void app_main(void) {
 
         gpio_set_level(LED_PIN, 0); // LED off
 
-        // read flash memory
+        // flash interface
         if (boot_pressed) {
-            ESP_LOGI(TAG, "Boot button pressed");
+            // DEBUG
+            /*
+            ESP_LOGI(TAG, "Clearing flights");
+            if (flash_log_clear(0) == ESP_OK) {
+                ESP_LOGI(TAG, "flights cleared");
+            } else {
+                ESP_LOGE(TAG, "failed to clear flights");
+            }
+            return;
+            */
+
+            ESP_LOGI(TAG, "Listing flights:");
+            flash_log_list_flights();
+
+            ESP_LOGI(TAG, "Starting Flash Interface...");
+            vTaskDelay(pdMS_TO_TICKS(100));
             xTaskCreate(flash_interface_task, "flash_interface", 4096, NULL, 5, NULL);
             return;
         }
@@ -602,7 +655,7 @@ void app_main(void) {
     {
         if (i2cdev_init() != ESP_OK) {
             ESP_LOGE(TAG, "I2C failed to init");
-            avionics_abort(3);
+            avionics_abort(4);
         }
         ESP_LOGI(TAG, "I2C initialized");
         vTaskDelay(pdMS_TO_TICKS(200));
@@ -627,7 +680,7 @@ void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(200));
         if (bmp280_init(&bmp_dev, &params) != ESP_OK) {
             ESP_LOGE(TAG, "BMP280 failed to init");
-            avionics_abort(4);
+            avionics_abort(5);
         }
         ESP_LOGI(TAG, "BMP280 initialized");
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -645,12 +698,12 @@ void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(200));
         if (mpu6050_init(&mpu_dev)) {
             ESP_LOGE(TAG, "MPU6050 failed to init");
-            avionics_abort(5);
+            avionics_abort(6);
         }
 
         if (mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_250) || mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_8) || mpu6050_set_dlpf_mode(&mpu_dev, MPU6050_DLPF_3)) {
             ESP_LOGE(TAG, "MPU6050 failed to set range/dlpf");
-            avionics_abort(5);
+            avionics_abort(6);
         }
 
         ESP_LOGI(TAG, "MPU6050 initialized");
@@ -666,20 +719,21 @@ void app_main(void) {
         lora_dev.aux_pin = LORA_AUX;
         lora_dev.uart_num = LORA_UART;
         lora_dev.baud_rate = LORA_BAUD_RATE;
-        lora_dev.channel = TMTC_CHANNEL;
         if (lora_init(&lora_dev) != ESP_OK) {
             ESP_LOGE(TAG, "LoRa failed to init");
-            avionics_abort(6);
+            avionics_abort(7);
         }
-        lora_set_rssi(&lora_dev, false);
-        lora_set_channel(&lora_dev, TMTC_CHANNEL);
         // lora_set_power(&lora_dev, LORA_POWER_22_DBM);
         // lora_set_power(&lora_dev, LORA_POWER_17_DBM);
         lora_set_power(&lora_dev, LORA_POWER_13_DBM);
+        lora_set_rssi(&lora_dev, false);
+        lora_set_address(&lora_dev, TMTC_ADDRESS);
+        lora_set_channel(&lora_dev, TMTC_CHANNEL);
         lora_set_air_data_rate(&lora_dev, TMTC_AIR_DATA_RATE);
+
         if (uart_flush(lora_dev.uart_num) != ESP_OK) {
             ESP_LOGE(TAG, "LoRa uart failed to flush");
-            avionics_abort(6);
+            avionics_abort(7);
         }
         ESP_LOGI(TAG, "LoRa initialized");
         vTaskDelay(pdMS_TO_TICKS(500));
@@ -689,16 +743,22 @@ void app_main(void) {
     {
         if(gps_init_desc(&gps_dev, GPS_TX, GPS_RX, GPS_UART) != ESP_OK) {
             ESP_LOGE(TAG, "GPS failed to init");
-            avionics_abort(7);
+            avionics_abort(8);
         };
         ESP_LOGI(TAG, "GPS initialized");
     }
 
-    // create tasks
-    xTaskCreatePinnedToCore(avionics_task, "avionics", 4096, NULL, 10, NULL, 1); // APP_CPU
-    xTaskCreatePinnedToCore(lora_task, "lora", 4096, NULL, 5, NULL, 0); // PRO_CPU
-    xTaskCreatePinnedToCore(flash_task, "flash", 4096, NULL, 5, NULL, 0); // PRO_CPU
+    // create xQueue
+    {
+        flash_queue = xQueueCreate(32, sizeof(flash_payload_t));
+        lora_queue = xQueueCreate(1, sizeof(lora_payload_t)); // mailbox
+        telecommand_queue = xQueueCreate(8, sizeof(telecommand_payload_t));
+    }
 
-    // DEBUG
-    xTaskCreatePinnedToCore(fake_telecommand_task, "fake_telecommand", 1024, NULL, 5, NULL, 0); // PRO_CPU
+    // create tasks
+    {
+        xTaskCreatePinnedToCore(avionics_task, "avionics", 4096, NULL, 10, NULL, 1); // APP_CPU
+        xTaskCreatePinnedToCore(flash_task, "flash", 4096, NULL, 5, NULL, 0); // PRO_CPU
+        xTaskCreatePinnedToCore(lora_task, "lora", 4096, NULL, 5, NULL, 0); // PRO_CPU
+    }
 }

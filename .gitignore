@@ -4,6 +4,7 @@
 
 # tools
 tools/GroundStation/dashboard/assets/maps/*
+tools/FlashManager/assets/maps/*
 tools/Analysis/*.txt
 tools/Simulation/environment/*.txt
 tools/Simulation/bindings/flight_logic_bindings.py
