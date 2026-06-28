@@ -59,6 +59,40 @@ esp_err_t lora_init(lora_dev_t *dev) {
     return ESP_OK;
 }
 
+esp_err_t lora_set_address(lora_dev_t *dev, uint16_t address) {
+    if (dev == NULL) return ESP_ERR_INVALID_ARG;
+
+    // config mode
+    gpio_set_level(dev->m0_pin, 1);
+    gpio_set_level(dev->m1_pin, 1);
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
+
+    // clear uart buffer
+    uart_flush_input(dev->uart_num);
+
+    uint8_t addh = (address >> 8) & 0xFF;
+    uint8_t addl = address & 0xFF;
+
+    // write ADDH (0x00) and ADDL (0x01)
+    uint8_t write_cmd[5] = {0xC2, 0x00, 0x02, addh, addl};
+    uart_write_bytes(dev->uart_num, (const uint8_t *)write_cmd, 5);
+    uart_wait_tx_done(dev->uart_num, pdMS_TO_TICKS(100));
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
+
+    // normal mode
+    gpio_set_level(dev->m0_pin, 0);
+    gpio_set_level(dev->m1_pin, 0);
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (!lora_wait_aux(dev, pdMS_TO_TICKS(1000))) return ESP_FAIL;
+
+    return ESP_OK;
+}
+
 esp_err_t lora_set_channel(lora_dev_t *dev, uint8_t channel) {
     if (dev == NULL) return ESP_ERR_INVALID_ARG;
 

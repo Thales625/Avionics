@@ -29,7 +29,7 @@ static inline void w25q64_cs_high(void) {
 
 static inline void w25q64_wait_ready(void) {
     while ((w25q64_read_status() & 0x01) == 0x01) {
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 

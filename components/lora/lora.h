@@ -11,7 +11,6 @@ typedef struct {
     int aux_pin;
     uart_port_t uart_num;
     uint32_t baud_rate;
-    uint8_t channel;
 } lora_dev_t;
 
 typedef enum {
@@ -30,6 +29,7 @@ typedef enum {
 } lora_power_t;
 
 esp_err_t lora_init(lora_dev_t *dev);
+esp_err_t lora_set_address(lora_dev_t *dev, uint16_t address);
 esp_err_t lora_set_channel(lora_dev_t *dev, uint8_t channel);
 esp_err_t lora_set_rssi(lora_dev_t *dev, bool enable);
 esp_err_t lora_set_air_data_rate(lora_dev_t *dev, lora_air_data_rate_t rate);

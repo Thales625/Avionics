@@ -1,7 +1,6 @@
 #include "freertos/FreeRTOS.h" // IWYU pragma: keep
 #include "freertos/task.h"
 #include "driver/uart.h"
-#include "esp_timer.h"
 #include "driver/gpio.h"
 
 #include <unistd.h>
@@ -74,15 +73,17 @@ void app_main(void) {
         lora_dev.aux_pin = LORA_AUX;
         lora_dev.uart_num = LORA_UART;
         lora_dev.baud_rate = LORA_BAUD_RATE;
-        lora_dev.channel = TMTC_CHANNEL;
         if (lora_init(&lora_dev) != ESP_OK) {
             ground_station_abort(2);
         }
-        lora_set_rssi(&lora_dev, true);
         // lora_set_power(&lora_dev, LORA_POWER_22_DBM);
-        lora_set_power(&lora_dev, LORA_POWER_17_DBM);
-        // lora_set_power(&lora_dev, LORA_POWER_13_DBM);
+        // lora_set_power(&lora_dev, LORA_POWER_17_DBM);
+        lora_set_power(&lora_dev, LORA_POWER_13_DBM);
+        lora_set_rssi(&lora_dev, true);
+        lora_set_address(&lora_dev, TMTC_ADDRESS);
+        lora_set_channel(&lora_dev, TMTC_CHANNEL);
         lora_set_air_data_rate(&lora_dev, TMTC_AIR_DATA_RATE);
+
         uart_flush(lora_dev.uart_num);
     }
 
