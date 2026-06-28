@@ -7,9 +7,16 @@
 #define TELECOMMAND_MAGIC 0x54434D44 // "TCMD"
 
 #define TMTC_AIR_DATA_RATE LORA_AIR_DATA_RATE_2400
+#define TMTC_ADDRESS 0x5554
 #define TMTC_CHANNEL 65
 
 // uplink
+typedef enum {
+    TC_DISARM,
+    TC_ARM,
+    TC_PARACHUTE_EJECT,
+} telecommand_t;
+
 typedef struct __attribute__((packed)) {
     uint8_t id;
     int32_t param;

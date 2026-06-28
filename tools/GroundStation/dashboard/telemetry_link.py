@@ -17,6 +17,7 @@ class TelemetryLink:
 
         self.is_running = False
         self.serial_port = serial.Serial()
+        self.serial_port.timeout = 0.5
         self.thread: threading.Thread | None = None
 
         self.wdt_last_packet = monotonic()
@@ -30,7 +31,7 @@ class TelemetryLink:
 
         # get TELECOMMAND struct
         try:
-            self.TC_MAGIC_SIZE, self.TC_MAGIC_BYTES, self.TC_PACKET_FORMAT, self.TC_PACKET_FIELDS = parse_telecommand_header(header_path)
+            self.TC_MAGIC_SIZE, self.TC_MAGIC_BYTES, self.TC_PACKET_FORMAT, self.TC_PACKET_FIELDS, self.TC_ENUM = parse_telecommand_header(header_path)
         except Exception as e:
             Logger.error(f"<Parser> Fatal error processing telecommand header: {e}")
             exit()
@@ -66,7 +67,6 @@ class TelemetryLink:
         try:
             self.serial_port.port = port
             self.serial_port.baudrate = baudrate
-            self.serial_port.timeout = 0.5
 
             self.serial_port.dtr = False
             self.serial_port.rts = False

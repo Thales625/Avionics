@@ -1,5 +1,6 @@
 if __name__ == "__main__":
     import sys
+    from pathlib import Path
 
     from main_window import MainWindow, init
 
@@ -7,10 +8,17 @@ if __name__ == "__main__":
     from widgets.status import StatusWidget
     from widgets.gps import GpsWidget
     from widgets.telecommand import TelecommandWidget
+    from telemetry_parser import parse_flight_logic_header
 
     app = init()
 
     window = MainWindow("URT - Ground Station")
+
+    # get flight phase enum
+    base_dir = Path(__file__).resolve().parent
+    header_path = (base_dir / "../../../lib/flight_logic/flight_logic.h").resolve()
+    flight_phase_enum = parse_flight_logic_header(header_path)
+    phase_by_value = {v: k.replace("PHASE_", "").replace("_", " ").lower().capitalize() for k, v in flight_phase_enum.items()}
 
     # --- add widgets ---
 
@@ -23,7 +31,7 @@ if __name__ == "__main__":
             {
                 "rssi": lambda val: f"RSSI: {val} dBm",
                 "ut": lambda val: f"Time: {val:.1f} s",
-                "phase": lambda val: f"Phase: {val}",
+                "phase": lambda val: f"Phase: {phase_by_value[val]}",
                 "pressure": lambda val: f"Press: {val:.0f} Pa",
                 "temperature": lambda val: f"Temp: {val:.0f} °C",
                 "satellites": lambda val: f"Satellites: {val}",

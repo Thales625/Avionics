@@ -79,15 +79,15 @@ class TelecommandWidget(Widget):
         self.setLayout(layout)
 
     def cmd_arm(self):
-        self.link.transmit(id=1, param=self.link.TC_MAGIC_BYTES)
+        self.link.transmit(id=self.link.TC_ENUM["TC_ARM"], param=self.link.TC_MAGIC_BYTES)
         Logger.info("ARM send")
 
     def cmd_disarm(self):
-        self.link.transmit(id=0, param=self.link.TC_MAGIC_BYTES)
+        self.link.transmit(id=self.link.TC_ENUM["TC_DISARM"], param=self.link.TC_MAGIC_BYTES)
         Logger.info("DISARM send")
 
     def cmd_eject(self):
-        self.link.transmit(id=2, param=self.link.TC_MAGIC_BYTES)
+        self.link.transmit(id=self.link.TC_ENUM["TC_PARACHUTE_EJECT"], param=self.link.TC_MAGIC_BYTES)
         Logger.info("EJECT send")
 
     def send_custom_command(self):
