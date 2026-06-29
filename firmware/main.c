@@ -25,6 +25,31 @@
 #include "gps.h"
 #include "w25q64.h"
 
+#define AVIONICS_ERROR_CHECK(x, code, reason) do { \
+    esp_err_t __err_rc = (x); \
+    if (__err_rc != ESP_OK) { \
+        ESP_LOGE(TAG, \
+            "(ABORT) %s (%s:%d): %s", \
+            reason, __FILE__, __LINE__, \
+            esp_err_to_name(__err_rc) \
+        ); \
+        avionics_abort(code); \
+    } \
+} while (0)
+
+typedef enum {
+    ABORT_GPIO_INIT = 1,
+    ABORT_W25QXX_INIT = 2,
+    ABORT_FLASH_LOG_INIT = 3,
+    ABORT_I2C_INIT = 4,
+    ABORT_BMP280_INIT = 5,
+    ABORT_MPU6050_INIT = 6,
+    ABORT_LORA_INIT = 7,
+    ABORT_GPS_INIT = 8,
+    ABORT_SENSOR_READING = 9,
+    ABORT_USB_UART_INIT = 10,
+} abort_code_t;
+
 #define AVIONICS_INTERVAL pdMS_TO_TICKS(40) // 40 ms = 25 Hz
 #define BOOT_TIMEOUT pdMS_TO_TICKS(3000)
 
@@ -122,9 +147,6 @@ static void avionics_abort(int code) {
     gpio_set_level(PARACHUTE_PIN, 0);
     gpio_set_level(LED_PIN, 0);
 
-    // log
-    ESP_LOGW(TAG, "ABORT! code: %d", code);
-
     // abort loop
     while (1) {
         for (int i=0; i<code; i++) {
@@ -159,14 +181,17 @@ static void avionics_task(void *arg) {
 
     // init flight logic core
     flight_logic.state.ut = (uint32_t)(esp_timer_get_time() / 1000ULL);
-    if (bmp280_read_float(&bmp_dev, &flight_logic.state.temperature, &flight_logic.state.pressure) != ESP_OK) {
-        ESP_LOGW(TAG, "BMP280: initial reading failed");
-        avionics_abort(9);
-    }
-    if (mpu6050_get_motion(&mpu_dev, &flight_logic.state.accel, &flight_logic.state.ang_vel) != ESP_OK) {
-        ESP_LOGW(TAG, "MPU6050: initial reading failed");
-        avionics_abort(9);
-    }
+
+    AVIONICS_ERROR_CHECK(
+        bmp280_read_float(&bmp_dev, &flight_logic.state.temperature, &flight_logic.state.pressure),
+        ABORT_SENSOR_READING,
+        "BMP280 initial reading failed"
+    );
+    AVIONICS_ERROR_CHECK(
+        mpu6050_get_motion(&mpu_dev, &flight_logic.state.accel, &flight_logic.state.ang_vel),
+        ABORT_SENSOR_READING,
+        "MPU6050 initial reading failed"
+    );
     flight_logic_init(&flight_logic);
 
     // frequency
@@ -414,13 +439,21 @@ static void flash_interface_task(void *arg) {
             .source_clk = UART_SCLK_APB,
         };
 
-        uart_driver_install(UART_PORT_USB, 256, 256, 0, NULL, 0);
-        uart_param_config(UART_PORT_USB, &uart_config);
-        if (uart_set_pin(UART_PORT_USB, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) {
-            avionics_abort(10);
-        }
-        uart_flush(UART_PORT_USB);
-        uart_flush_input(UART_PORT_USB);
+        esp_err_t err = ESP_OK;
+
+        err |= uart_driver_install(UART_PORT_USB, 256, 256, 0, NULL, 0);
+        err |= uart_param_config(UART_PORT_USB, &uart_config);
+
+        err |= uart_set_pin(UART_PORT_USB, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+
+        err |= uart_flush(UART_PORT_USB);
+        err |= uart_flush_input(UART_PORT_USB);
+
+        AVIONICS_ERROR_CHECK(
+            err, // error code is not meaningful, only success/failure
+            ABORT_USB_UART_INIT,
+            "Flash Interface USB UART init failed"
+        );
     }
 
     uint8_t rx_byte;
@@ -511,6 +544,28 @@ static void flash_interface_task(void *arg) {
 }
 
 void app_main(void) {
+    // GPIO OUT configuration
+    {
+        gpio_config_t out_conf = {
+            .pin_bit_mask = (1ULL << PARACHUTE_PIN) |
+                            (1ULL << LED_PIN),
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE
+        };
+
+        AVIONICS_ERROR_CHECK(
+            gpio_config(&out_conf),
+            ABORT_GPIO_INIT,
+            "GPIO OUT config failed"
+        );
+
+        // set default values
+        gpio_set_level(PARACHUTE_PIN, 0);
+        gpio_set_level(LED_PIN, 0);
+    }
+
     // GPIO IN configuration
     {
         gpio_config_t in_conf = {
@@ -522,10 +577,11 @@ void app_main(void) {
             .intr_type = GPIO_INTR_DISABLE
         };
 
-        if(gpio_config(&in_conf) != ESP_OK) {
-            ESP_LOGE(TAG, "GPIO IN config failed");
-            avionics_abort(1);
-        }
+        AVIONICS_ERROR_CHECK(
+            gpio_config(&in_conf),
+            ABORT_GPIO_INIT,
+            "GPIO IN config failed"
+        );
     }
 
     // Battery ADC configuration (one-shot)
@@ -538,67 +594,51 @@ void app_main(void) {
             .intr_type = GPIO_INTR_DISABLE
         };
 
-        if(gpio_config(&in_bat_conf) != ESP_OK) {
-            ESP_LOGE(TAG, "Battery GPIO config failed");
-            avionics_abort(1);
-        }
+        AVIONICS_ERROR_CHECK(
+            gpio_config(&in_bat_conf),
+            ABORT_GPIO_INIT,
+            "Battery GPIO config failed"
+        );
 
         adc_oneshot_unit_init_cfg_t init_config1 = {
             .unit_id = ADC_UNIT_1,
         };
 
-        if (adc_oneshot_new_unit(&init_config1, &adc1_handle) != ESP_OK) {
-            ESP_LOGE(TAG, "ADC unit failed to init");
-            avionics_abort(1);
-        }
+        AVIONICS_ERROR_CHECK(
+            adc_oneshot_new_unit(&init_config1, &adc1_handle),
+            ABORT_GPIO_INIT,
+            "ADC unit failed to init"
+        );
 
         adc_oneshot_chan_cfg_t adc_config = {
             .bitwidth = ADC_BITWIDTH_12,
             .atten = ADC_ATTEN_DB_12,
         };
 
-        if (adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_0, &adc_config) != ESP_OK) {
-            ESP_LOGE(TAG, "ADC channel config failed");
-            avionics_abort(1);
-        }
-    }
-
-    // GPIO OUT configuration
-    {
-        gpio_config_t out_conf = {
-            .pin_bit_mask = (1ULL << PARACHUTE_PIN) |
-                            (1ULL << LED_PIN),
-            .mode = GPIO_MODE_OUTPUT,
-            .pull_up_en = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
-            .intr_type = GPIO_INTR_DISABLE
-        };
-
-        if(gpio_config(&out_conf) != ESP_OK) {
-            ESP_LOGE(TAG, "GPIO OUT config failed");
-            avionics_abort(1);
-        }
-
-        // set default values
-        gpio_set_level(PARACHUTE_PIN, 0);
-        gpio_set_level(LED_PIN, 0);
+        AVIONICS_ERROR_CHECK(
+            adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_0, &adc_config),
+            ABORT_GPIO_INIT,
+            "ADC channel config failed"
+        );
     }
 
     // W25Q64 initialization
     {
-        if (w25q64_init(SPI_MOSI, SPI_MISO, SPI_CLK, W25Q_CS) != ESP_OK) {
-            ESP_LOGE(TAG, "W25Q64 failed to init");
-            avionics_abort(2);
-        }
+        AVIONICS_ERROR_CHECK(
+            w25q64_init(SPI_MOSI, SPI_MISO, SPI_CLK, W25Q_CS),
+            ABORT_W25QXX_INIT,
+            "W25Q64 failed to init"
+        );
         ESP_LOGI(TAG, "W25Q64 initialized");
     }
 
     // Flash Log initialization
     {
-        if (flash_log_init() != ESP_OK) {
-            ESP_LOGE(TAG, "Flash log failed to init");
-            avionics_abort(3);
-        }
+        AVIONICS_ERROR_CHECK(
+            flash_log_init(),
+            ABORT_FLASH_LOG_INIT,
+            "Flash log failed to init"
+        );
     }
 
     // check boot button (Flash Interface)
@@ -653,10 +693,11 @@ void app_main(void) {
 
     // I2C initialization
     {
-        if (i2cdev_init() != ESP_OK) {
-            ESP_LOGE(TAG, "I2C failed to init");
-            avionics_abort(4);
-        }
+        AVIONICS_ERROR_CHECK(
+            i2cdev_init(),
+            ABORT_I2C_INIT,
+            "I2C failed to init"
+        );
         ESP_LOGI(TAG, "I2C initialized");
         vTaskDelay(pdMS_TO_TICKS(200));
     }
@@ -678,10 +719,11 @@ void app_main(void) {
             SCL_GPIO_PIN
         );
         vTaskDelay(pdMS_TO_TICKS(200));
-        if (bmp280_init(&bmp_dev, &params) != ESP_OK) {
-            ESP_LOGE(TAG, "BMP280 failed to init");
-            avionics_abort(5);
-        }
+        AVIONICS_ERROR_CHECK(
+            bmp280_init(&bmp_dev, &params),
+            ABORT_BMP280_INIT,
+            "BMP280 failed to init"
+        );
         ESP_LOGI(TAG, "BMP280 initialized");
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -696,16 +738,26 @@ void app_main(void) {
             SCL_GPIO_PIN
         );
         vTaskDelay(pdMS_TO_TICKS(200));
-        if (mpu6050_init(&mpu_dev)) {
-            ESP_LOGE(TAG, "MPU6050 failed to init");
-            avionics_abort(6);
-        }
-
-        if (mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_250) || mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_8) || mpu6050_set_dlpf_mode(&mpu_dev, MPU6050_DLPF_3)) {
-            ESP_LOGE(TAG, "MPU6050 failed to set range/dlpf");
-            avionics_abort(6);
-        }
-
+        AVIONICS_ERROR_CHECK(
+            mpu6050_init(&mpu_dev),
+            ABORT_MPU6050_INIT,
+            "MPU6050 failed to init"
+        );
+        AVIONICS_ERROR_CHECK(
+            mpu6050_set_full_scale_gyro_range(&mpu_dev, MPU6050_GYRO_RANGE_250),
+            ABORT_MPU6050_INIT,
+            "MPU6050 failed to set gyro range"
+        );
+        AVIONICS_ERROR_CHECK(
+            mpu6050_set_full_scale_accel_range(&mpu_dev, MPU6050_ACCEL_RANGE_8),
+            ABORT_MPU6050_INIT,
+            "MPU6050 failed to set accel range"
+        );
+        AVIONICS_ERROR_CHECK(
+            mpu6050_set_dlpf_mode(&mpu_dev, MPU6050_DLPF_3),
+            ABORT_MPU6050_INIT,
+            "MPU6050 failed to set DLPF mode"
+        );
         ESP_LOGI(TAG, "MPU6050 initialized");
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -719,10 +771,11 @@ void app_main(void) {
         lora_dev.aux_pin = LORA_AUX;
         lora_dev.uart_num = LORA_UART;
         lora_dev.baud_rate = LORA_BAUD_RATE;
-        if (lora_init(&lora_dev) != ESP_OK) {
-            ESP_LOGE(TAG, "LoRa failed to init");
-            avionics_abort(7);
-        }
+        AVIONICS_ERROR_CHECK(
+            lora_init(&lora_dev),
+            ABORT_LORA_INIT,
+            "LoRa failed to init"
+        );
         // lora_set_power(&lora_dev, LORA_POWER_22_DBM);
         // lora_set_power(&lora_dev, LORA_POWER_17_DBM);
         lora_set_power(&lora_dev, LORA_POWER_13_DBM);
@@ -731,20 +784,21 @@ void app_main(void) {
         lora_set_channel(&lora_dev, TMTC_CHANNEL);
         lora_set_air_data_rate(&lora_dev, TMTC_AIR_DATA_RATE);
 
-        if (uart_flush(lora_dev.uart_num) != ESP_OK) {
-            ESP_LOGE(TAG, "LoRa uart failed to flush");
-            avionics_abort(7);
-        }
+        AVIONICS_ERROR_CHECK(
+            uart_flush(lora_dev.uart_num),
+            ABORT_LORA_INIT,
+            "LoRa uart failed to flush"
+        );
         ESP_LOGI(TAG, "LoRa initialized");
-        vTaskDelay(pdMS_TO_TICKS(500));
     }
 
     // GPS initialization
     {
-        if(gps_init_desc(&gps_dev, GPS_TX, GPS_RX, GPS_UART) != ESP_OK) {
-            ESP_LOGE(TAG, "GPS failed to init");
-            avionics_abort(8);
-        };
+        AVIONICS_ERROR_CHECK(
+            gps_init_desc(&gps_dev, GPS_TX, GPS_RX, GPS_UART),
+            ABORT_GPS_INIT,
+            "GPS failed to init"
+        );
         ESP_LOGI(TAG, "GPS initialized");
     }
 
