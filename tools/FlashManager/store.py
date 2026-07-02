@@ -48,7 +48,7 @@ class Store:
             self.cursor = None
             return
 
-        self.cursor = max(0, min(index, len(self.data) - 1))
+        self.cursor = max(0, min(index, len(self) - 1))
 
     def clear(self, key=None):
         if key is None: # clear all

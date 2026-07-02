@@ -1,23 +1,33 @@
 if __name__ == "__main__":
     import sys
 
-    from main_window import MainWindow, init
+    from PyQt6.QtWidgets import QApplication
+
+    from flash_window import FlashWindow
+    from viewer_window import ViewerWindow
+
+    from store import Store
 
     from widgets.graph import GraphWidget
     from widgets.status import StatusWidget
     from widgets.gps import GpsWidget
 
-    app = init()
+    # init app
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
 
-    window = MainWindow("URT - Flash Manager")
+    store = Store()
 
-    # --- add widgets ---
+    flash_window = FlashWindow("URT - Flash Manager", store)
+    viewer_window = ViewerWindow("URT - Flight Viewer", store)
+
+    # --- add widgets to viewer window ---
 
     # status dock
-    window.add_widget(
+    viewer_window.add_widget(
         StatusWidget(
             "Flight status",
-            window.store,
+            viewer_window.store,
             {
                 "ut": lambda val: f"Time: {val:.1f} s",
                 "phase": lambda val: f"Phase: {val}",
@@ -30,46 +40,62 @@ if __name__ == "__main__":
     )
 
     # accel graph
-    window.add_widget(
+    viewer_window.add_widget(
         GraphWidget(
             "Acceleration",
-            window.store,
-            "ut", "accel_mag",
-            min_y=0, max_y=5
+            viewer_window.store,
+            "ut", ["accel_x", "accel_y", "accel_z"],
         )
     )
 
     # gyro graph
-    window.add_widget(
+    viewer_window.add_widget(
         GraphWidget(
             "Gyro",
-            window.store,
-            "ut", "ang_vel_mag",
-            min_y=0, max_y=180
+            viewer_window.store,
+            "ut", ["ang_vel_x", "ang_vel_y", "ang_vel_z"],
         )
     )
 
-    # altitude graph
-    window.add_widget(
+    # baro graph
+    viewer_window.add_widget(
         GraphWidget(
-            "Altitude",
-            window.store,
-            "ut", "altitude",
-            min_y=-10, max_y=150
+            "Pressure",
+            viewer_window.store,
+            "ut", ["pressure", "temperature"],
+        )
+    )
+
+    # battery level graph
+    viewer_window.add_widget(
+        GraphWidget(
+            "Battery Voltage",
+            viewer_window.store,
+            "ut", "v_bat",
+        )
+    )
+
+    # flight phase graph
+    viewer_window.add_widget(
+        GraphWidget(
+            "Flight Phase",
+            viewer_window.store,
+            "ut", "phase",
         )
     )
 
     # gps widget
-    window.add_widget(
+    viewer_window.add_widget(
         GpsWidget(
             "GPS",
-            window.store,
+            viewer_window.store,
             "lat_nmea", "lon_nmea",
             "assets/maps/pelotas.tiff",
         )
     )
 
-    # display window
-    window.show()
+    # display windows
+    viewer_window.show()
+    flash_window.show()
 
     sys.exit(app.exec())

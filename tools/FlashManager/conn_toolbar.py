@@ -59,6 +59,19 @@ class ConnToolbar(QToolBar):
 
                 # clear stored data
                 self.store.clear()
+
+                # /DEBUG
+                '''
+                N = 8
+                print(f"Reading Flight {N}...")
+                packets = self.link.cmd_read_flight(N)
+                if packets is not None:
+                    print(f"Flight {N} has {len(packets)} packets")
+                    for packet in packets:
+                        self.store.add(packet)
+                '''
+                # \DEBUG
+
             else:
                 QMessageBox.critical(self, "Connection Error", msg)
         else:

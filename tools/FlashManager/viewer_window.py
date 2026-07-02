@@ -1,35 +1,27 @@
-from PyQt6.QtWidgets import QApplication, QMainWindow, QDockWidget
+from PyQt6.QtWidgets import QMainWindow, QDockWidget
 from PyQt6.QtCore import Qt, QTimer
 
-import sys
-
-from link import Link
-from store import Store
-from conn_toolbar import ConnToolbar
-
 from widgets.base.manager import WidgetManager
+from playback_toolbar import PlaybackToolbar
 
-class MainWindow(QMainWindow):
-    def __init__(self, title):
+class ViewerWindow(QMainWindow):
+    def __init__(self, title, store):
         super().__init__()
 
-        # --- link ---
-        self.link = Link()
-
         # --- storage ---
-        self.store = Store()
+        self.store = store
 
         # --- widget manager ----
         self.widget_manager = WidgetManager()
+
+        # --- playback toolbar ---
+        self.playback_toolbar = PlaybackToolbar(self.store)
+        self.addToolBar(Qt.ToolBarArea.BottomToolBarArea, self.playback_toolbar)
 
         # --- timer ---
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_ui)
         self.timer.start(50)
-
-        # --- toolbar ---
-        self.conn_toolbar = ConnToolbar(self.store, self.link)
-        self.addToolBar(self.conn_toolbar)
 
         # --- window ---
         self.setWindowTitle(title)
@@ -43,25 +35,14 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
 
     def update_ui(self):
-        # store packets
-        # self.store.add(packet)
-
         # update widgets
         self.widget_manager.tick()
 
-        # update connection toolbar
-        self.conn_toolbar.tick()
+        # update playback toolbar
+        self.playback_toolbar.tick()
 
     def closeEvent(self, a0):
         # stop timer
         if self.timer.isActive(): self.timer.stop()
 
-        # disconnect telemetry link
-        self.link.disconnect()
-
         if a0 is not None: a0.accept()
-
-def init():
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    return app

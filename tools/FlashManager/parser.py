@@ -14,6 +14,12 @@ type_map = {
 
 byte_order = "<" # little endian
 
+def _get_variable(variables, var_name):
+    for var in variables:
+        if var.get("name") == var_name:
+            return var.get("default")
+    return None
+
 def _get_define(defines, field):
     for define in defines:
         if define.startswith(field):
@@ -42,7 +48,18 @@ def parse_flash_interface(filepath):
     # get enum values
     enum = _get_enum(cpp_header.enums, "flash_cmd_t")
 
-    return usb_magic_val, enum
+    # get ack and nack values
+    flash_ack_str = _get_variable(cpp_header.variables, "flash_ack")
+    flash_nack_str = _get_variable(cpp_header.variables, "flash_nack")
+
+    if flash_ack_str is None or flash_nack_str is None:
+        raise ValueError("flash_ack or flash_nack not found in variables")
+
+    # convert flash ack/nack to little-endian
+    flash_ack_val = struct.pack('<I', int(flash_ack_str, 16))
+    flash_nack_val = struct.pack('<I', int(flash_nack_str, 16))
+
+    return usb_magic_val, enum, flash_ack_val, flash_nack_val
 
 def parse_flash_header(filepath):
     cpp_header = CppHeaderParser.CppHeader(filepath)

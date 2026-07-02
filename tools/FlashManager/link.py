@@ -39,8 +39,8 @@ class Link:
         # get packet size
         self.PACKET_SIZE = struct.calcsize(self.PACKET_FORMAT)
 
-        # get usb magic
-        self.USB_MAGIC, self.FLASH_CMD = parse_flash_interface(flash_interface_path)
+        # get flash interface info
+        self.USB_MAGIC, self.FLASH_CMD, self.FLASH_ACK, self.FLASH_NACK = parse_flash_interface(flash_interface_path)
 
     @staticmethod
     def get_available_ports():
@@ -64,19 +64,6 @@ class Link:
 
             self.is_running = True
 
-            # /DEBUG
-            sleep(1)
-            Logger.debug("List Headers")
-            self.cmd_list_headers()
-            return True, "Connected"
-
-            Logger.debug("Read Header")
-            self.cmd_read_header(2)
-
-            Logger.debug("Read Flight")
-            self.cmd_read_flight(2)
-            # \DEBUG
-
             return True, "Connected"
         except Exception as e:
             self.disconnect()
@@ -89,15 +76,21 @@ class Link:
             self.serial_port.close()
 
 
-    def cmd_list_headers(self):
-        if not self.is_running:
-            return None
-
-        cmd_id = self.FLASH_CMD["CMD_LIST_HEADERS"]
-        cmd_param = 0
-        cmd_bytes = struct.pack("<IIi", self.USB_MAGIC, cmd_id, cmd_param)
-
+    def transmit_cmd(self, id, param):
+        cmd_bytes = struct.pack("<IIi", self.USB_MAGIC, id, param)
         self.serial_port.write(cmd_bytes)
+
+
+    def cmd_clear_flights(self) -> None:
+        self.transmit_cmd(self.FLASH_CMD["CMD_CLEAR_FLIGHTS"], self.USB_MAGIC)
+
+    def cmd_list_headers(self) -> list[dict]:
+        if not self.is_running:
+            return []
+
+        self.transmit_cmd(self.FLASH_CMD["CMD_LIST_HEADERS"], 0)
+
+        headers = []
 
         # read response
         while True:
@@ -110,18 +103,17 @@ class Link:
             unpacked_header = struct.unpack(self.HEADER_FORMAT, response)
             header = dict(zip(self.HEADER_FIELDS, unpacked_header))
 
+            headers.append(header)
+
             print(header)
 
-    def cmd_read_header(self, flight_number):
+        return headers
+
+    def cmd_read_header(self, flight_number) -> dict | None:
         if not self.is_running:
             return None
 
-        cmd_id = self.FLASH_CMD["CMD_READ_HEADER"]
-        cmd_param = flight_number
-
-        cmd_bytes = struct.pack("<IIi", self.USB_MAGIC, cmd_id, cmd_param)
-        self.serial_port.write(cmd_bytes)
-        self.serial_port.flush()
+        self.transmit_cmd(self.FLASH_CMD["CMD_READ_HEADER"], flight_number)
 
         # read response
         header = None
@@ -139,31 +131,46 @@ class Link:
 
         return header
 
-    def cmd_read_flight(self, flight_number):
+    def cmd_read_flight(self, flight_number) -> list[dict]:
         if not self.is_running:
-            return None
+            return []
 
-        cmd_id = self.FLASH_CMD["CMD_READ_FLIGHT"]
-        cmd_param = flight_number
+        self.transmit_cmd(self.FLASH_CMD["CMD_READ_FLIGHT"], flight_number)
 
-        packet = struct.pack("<IIi", self.USB_MAGIC, cmd_id, cmd_param)
-        self.serial_port.write(packet)
-        self.serial_port.flush()
+        packets = []
+        sync_buffer = b''
 
         # read response
         while True:
-            response = self.serial_port.read(self.PACKET_SIZE)
+            rx_byte = self.serial_port.read(1)
+            if not rx_byte: continue
 
-            Logger.debug(f"Response: {response}")
-            print(len(response), self.PACKET_SIZE)
+            sync_buffer += rx_byte
 
-            # break on timeout
-            if len(response) != self.PACKET_SIZE:
+            # limit sync_buffer to 32bit size
+            if len(sync_buffer) > self.PACKET_MAGIC_SIZE: sync_buffer = sync_buffer[-self.PACKET_MAGIC_SIZE:]
+
+            Logger.debug("Sync Buffer:", sync_buffer)
+
+            if sync_buffer == self.FLASH_NACK:
+                Logger.error("NACK received")
+                return packets
+
+            elif sync_buffer == self.FLASH_ACK:
+                Logger.info("ACK received")
                 break
 
-            unpacked_data = struct.unpack(self.PACKET_FORMAT, response)
-            packet = dict(zip(self.PACKET_FIELDS, unpacked_data))
+            elif sync_buffer == self.PACKET_MAGIC_BYTES:
+                data_len = self.PACKET_SIZE - self.PACKET_MAGIC_SIZE
+                rest_of_packet = self.serial_port.read(data_len)
+                if len(rest_of_packet) == data_len:
+                    full_packet = self.PACKET_MAGIC_BYTES + rest_of_packet
 
-            print(packet)
+                    unpacked_data = struct.unpack(self.PACKET_FORMAT, full_packet)
+                    packet = dict(zip(self.PACKET_FIELDS, unpacked_data))
 
-        return packet
+                    packets.append(packet)
+
+                    Logger.info(packet)
+
+        return packets
