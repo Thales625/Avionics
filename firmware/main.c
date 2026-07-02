@@ -8,6 +8,8 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 #include "portmacro.h"
 
 #include <math.h>
@@ -85,9 +87,7 @@ typedef enum {
 
 #define BAT_R1 100000.0f
 #define BAT_R2 47000.0f
-#define BAT_ADC_MAX 4095.0f
-#define BAT_V_REF 3.3f
-#define BAT_MULTIPLIER (BAT_V_REF * ((BAT_R1 + BAT_R2) / BAT_R2) / BAT_ADC_MAX)
+#define BAT_MULTIPLIER ((BAT_R1 + BAT_R2) / BAT_R2)
 #define BAT_SENSE_PIN GPIO_NUM_36
 #define BAT_SAMPLING 25
 
@@ -105,6 +105,7 @@ static bmp280_t bmp_dev = { 0 };
 static mpu6050_dev_t mpu_dev = { 0 };
 
 static adc_oneshot_unit_handle_t adc1_handle;
+static adc_cali_handle_t adc1_cali_handle;
 
 static QueueHandle_t flash_queue;
 static QueueHandle_t lora_queue;
@@ -129,11 +130,16 @@ static void disarm_systems(void) {
 }
 
 static float read_battery_voltage(void) {
-    int raw_adc = 0;
+    int raw_adc;
+    int gpio_mv;
 
     adc_oneshot_read(adc1_handle, ADC_CHANNEL_0, &raw_adc);
 
-    return (float)raw_adc * BAT_MULTIPLIER;
+    adc_cali_raw_to_voltage(adc1_cali_handle, raw_adc, &gpio_mv);
+
+    float gpio_voltage = gpio_mv / 1000.0f;
+
+    return gpio_voltage * BAT_MULTIPLIER;
 }
 
 static void blink(uint32_t duration) {
@@ -584,7 +590,7 @@ void app_main(void) {
         );
     }
 
-    // Battery ADC configuration (one-shot)
+    // battery ADC configuration (one-shot)
     {
         gpio_config_t in_bat_conf = {
             .pin_bit_mask = (1ULL << BAT_SENSE_PIN),
@@ -619,6 +625,26 @@ void app_main(void) {
             adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_0, &adc_config),
             ABORT_GPIO_INIT,
             "ADC channel config failed"
+        );
+
+        adc_cali_line_fitting_config_t cali_config = {
+            .unit_id = ADC_UNIT_1,
+            .atten = ADC_ATTEN_DB_12,
+            .bitwidth = ADC_BITWIDTH_12,
+        };
+
+        #if CONFIG_IDF_TARGET_ESP32
+        adc_cali_line_fitting_efuse_val_t efuse_type;
+        esp_err_t err = adc_cali_scheme_line_fitting_check_efuse(&efuse_type);
+        if (err == ESP_OK && efuse_type == ADC_CALI_LINE_FITTING_EFUSE_VAL_DEFAULT_VREF) {
+            cali_config.default_vref = 1100; // used only if no calibration data exists in eFuse
+        }
+        #endif
+
+        AVIONICS_ERROR_CHECK(
+            adc_cali_create_scheme_line_fitting(&cali_config, &adc1_cali_handle),
+            ABORT_GPIO_INIT,
+            "ADC calibration init failed"
         );
     }
 
