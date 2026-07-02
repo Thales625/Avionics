@@ -6,6 +6,9 @@ from logger import Logger
 
 from .base.widget import Widget
 
+UINT8_RANGE = (0, 255)
+INT32_RANGE = (-(1<<31), (1<<31)-1)
+
 class TelecommandWidget(Widget):
     def __init__(self, title, telemetry_link, **kwargs):
         super().__init__(title, **kwargs)
@@ -49,23 +52,23 @@ class TelecommandWidget(Widget):
 
         # --- DEBUGGER ---
 
-        # ID (int16)
+        # ID (uint8)
         id_layout = QHBoxLayout()
         id_layout.addWidget(QLabel("ID:"))
 
         self.id_input = QSpinBox()
-        self.id_input.setRange(-32768, 32767)
+        self.id_input.setRange(*UINT8_RANGE)
         self.id_input.setValue(0)
         id_layout.addWidget(self.id_input)
         layout.addLayout(id_layout)
 
-        # Param (uint32)
+        # Param (int32)
         param_layout = QHBoxLayout()
         param_layout.addWidget(QLabel("Param:"))
 
         self.param_input = QLineEdit()
-        self.param_input.setPlaceholderText("0 - 4294967295")
-        self.param_input.setValidator(QIntValidator(0, 2147483647))
+        self.param_input.setPlaceholderText(f"{INT32_RANGE[0]} - {INT32_RANGE[1]}")
+        self.param_input.setValidator(QIntValidator(*INT32_RANGE))
         param_layout.addWidget(self.param_input)
         layout.addLayout(param_layout)
 
@@ -95,16 +98,16 @@ class TelecommandWidget(Widget):
 
         try:
             text = self.param_input.text()
-            param = int(text) if text else 0
+            cmd_param = int(text) if text else 0
 
-            if not (0 <= param <= 0xFFFFFFFF):
-                raise ValueError(f"{param} is out of uint32 bounds")
+            if not (INT32_RANGE[0] <= cmd_param <= INT32_RANGE[1]):
+                raise ValueError(f"{cmd_param} is out of int32 bounds")
         except ValueError as e:
             Logger.warning(f"Invalid param: {e}")
             return
 
-        self.link.transmit(cmd_id, param)
-        Logger.info(f"Custom Command: ID={cmd_id}, Param={param}")
+        self.link.transmit(cmd_id, cmd_param)
+        Logger.info(f"Custom Command: ID={cmd_id}, Param={cmd_param}")
 
     def tick(self):
         pass
