@@ -276,7 +276,7 @@ esp_err_t flash_log_read_flight(uint32_t flight_number) {
 }
 
 esp_err_t flash_log_get_flight_packet(uint32_t flash_packet_addr, uint32_t flash_packet_size, flash_packet_t* flash_packet) {
-    return w25q64_read_data(flash_packet_addr, (uint8_t *)&flash_packet, flash_packet_size);
+    return w25q64_read_data(flash_packet_addr, (uint8_t *)flash_packet, flash_packet_size);
 }
 
 

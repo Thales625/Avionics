@@ -53,7 +53,7 @@ typedef enum {
 } abort_code_t;
 
 #define AVIONICS_INTERVAL pdMS_TO_TICKS(40) // 40 ms = 25 Hz
-#define BOOT_TIMEOUT pdMS_TO_TICKS(3000)
+#define BOOT_TIMEOUT pdMS_TO_TICKS(5000)
 
 #define SPI_MISO GPIO_NUM_22
 #define SPI_MOSI GPIO_NUM_19
@@ -526,6 +526,7 @@ static void flash_interface_task(void *arg) {
                                         }
 
                                         uart_write_bytes(UART_PORT_USB, (uint8_t *)&packet, header.packet_size);
+                                        vTaskDelay(pdMS_TO_TICKS(30));
                                     }
                                     uart_write_bytes(UART_PORT_USB, &flash_ack, sizeof(flash_ack));
                                 } else {
